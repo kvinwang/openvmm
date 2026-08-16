@@ -143,9 +143,14 @@ pub async fn open_vhdx_chain(
 
         // Open the current file read-only just to read metadata.
         // The actual read-write open happens later via open_vhdx_chain_explicit.
-        let bf = crate::io::BlockingFile::open(&current_path, true)
+        // The writable leaf may be dirty after a crash. Open it with write
+        // access and replay before reading parent metadata; parents and a
+        // genuinely read-only chain remain non-mutating.
+        let replay_leaf = !read_only && current_path == path;
+        let bf = crate::io::BlockingFile::open(&current_path, !replay_leaf)
             .with_context(|| format!("failed to open vhdx file: {}", current_path.display()))?;
         let vhdx = vhdx::VhdxFile::open(bf)
+            .allow_replay(replay_leaf)
             .read_only()
             .await
             .with_context(|| format!("failed to parse vhdx file: {}", current_path.display()))?;
@@ -347,5 +352,30 @@ mod tests {
 
         let resource = open_vhdx_chain(&path, false).await.unwrap();
         let _ = resource;
+    }
+
+    #[pal_async::async_test]
+    async fn writable_auto_walk_replays_dirty_leaf(driver: pal_async::DefaultDriver) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dirty.vhdx");
+
+        let bf = crate::io::BlockingFile::open(&path, false).unwrap();
+        let mut params = vhdx::CreateParams {
+            disk_size: 1024 * 1024,
+            ..Default::default()
+        };
+        vhdx::create(&bf, &mut params).await.unwrap();
+        drop(bf);
+
+        let bf = crate::io::BlockingFile::open(&path, false).unwrap();
+        let dirty = vhdx::VhdxFile::open(bf).writable(&driver).await.unwrap();
+        dirty.abort().await;
+
+        // Chain discovery happens before the final writable layer resolver.
+        // It must replay the leaf rather than rejecting a normal crash image.
+        open_vhdx_chain(&path, false).await.unwrap();
+
+        let bf = crate::io::BlockingFile::open(&path, true).unwrap();
+        vhdx::VhdxFile::open(bf).read_only().await.unwrap();
     }
 }

@@ -346,6 +346,14 @@ pub async fn run_device_task(
             }
         }
     }
+
+    task.stop_all_queues().await;
+    if let Err(err) = task.device.shutdown().await {
+        tracelimit::error_ratelimited!(
+            error = &*err as &dyn std::error::Error,
+            "failed to shut down virtio device"
+        );
+    }
 }
 
 /// Send a config read to the device task, returning a deferred IO token.

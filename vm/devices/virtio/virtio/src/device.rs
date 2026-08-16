@@ -105,6 +105,12 @@ pub trait VirtioDevice: InspectMut + Send {
         async {}
     }
 
+    /// Permanently release backend session state when the transport task is
+    /// torn down. Unlike `stop_queue`, this is not called for pause or reset.
+    fn shutdown(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send {
+        async { Ok(()) }
+    }
+
     /// Whether the device supports save/restore.
     ///
     /// Devices that return `false` will cause the transport's `save()` to
@@ -163,6 +169,7 @@ pub trait DynVirtioDevice: InspectMut + Send {
 
     /// Reset device-internal state.
     fn reset(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>>;
 
     /// Whether the device supports save/restore.
     fn supports_save_restore(&self) -> bool;
@@ -224,6 +231,10 @@ impl<T: VirtioDevice> DynVirtioDevice for T {
 
     fn reset(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(VirtioDevice::reset(self))
+    }
+
+    fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(VirtioDevice::shutdown(self))
     }
 
     fn supports_save_restore(&self) -> bool {

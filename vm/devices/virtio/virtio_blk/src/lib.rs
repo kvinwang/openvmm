@@ -408,6 +408,12 @@ impl VirtioDevice for VirtioBlkDevice {
         Some(state)
     }
 
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        let (worker, _) = self.worker.get_mut();
+        worker.disk.shutdown().await?;
+        Ok(())
+    }
+
     fn supports_save_restore(&self) -> bool {
         true
     }

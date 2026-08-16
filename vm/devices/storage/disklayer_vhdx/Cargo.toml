@@ -16,6 +16,7 @@ disk_layered.workspace = true
 guestmem.workspace = true
 guid.workspace = true
 inspect.workspace = true
+parking_lot.workspace = true
 scsi_buffers.workspace = true
 thiserror.workspace = true
 vhdx.workspace = true

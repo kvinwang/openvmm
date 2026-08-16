@@ -366,6 +366,7 @@ trait DynLayerIo: Send + Sync + Inspect {
     ) -> Pin<Box<dyn 'a + Future<Output = Result<(), DiskError>> + Send>>;
 
     fn sync_cache(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), DiskError>> + Send>>;
+    fn shutdown(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), DiskError>> + Send>>;
 
     fn unmap(
         &self,
@@ -413,6 +414,10 @@ impl<T: LayerIo> DynLayerIo for T {
 
     fn sync_cache(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), DiskError>> + Send>> {
         Box::pin(self.sync_cache())
+    }
+
+    fn shutdown(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), DiskError>> + Send>> {
+        Box::pin(self.shutdown())
     }
 
     fn unmap(
@@ -546,6 +551,11 @@ pub trait LayerIo: 'static + Send + Sync + Inspect {
 
     /// Issues an asynchronous flush operation to the disk.
     fn sync_cache(&self) -> impl Future<Output = Result<(), DiskError>> + Send;
+
+    /// Permanently close this layer after all I/O has drained.
+    fn shutdown(&self) -> impl Future<Output = Result<(), DiskError>> + Send {
+        std::future::ready(Ok(()))
+    }
 
     /// Reads sectors from the layer.
     ///
@@ -802,6 +812,13 @@ impl DiskIo for LayeredDisk {
             if !layer.write_through {
                 break;
             }
+        }
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<(), DiskError> {
+        for layer in &self.layers {
+            layer.backing.shutdown().await?;
         }
         Ok(())
     }

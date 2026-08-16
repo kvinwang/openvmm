@@ -159,6 +159,10 @@ impl DiskIo for CryptDisk {
         self.inner.sync_cache().await
     }
 
+    async fn shutdown(&self) -> Result<(), DiskError> {
+        self.inner.shutdown().await
+    }
+
     /// Waits for the disk sector size to be different than the specified value.
     async fn wait_resize(&self, sector_count: u64) -> u64 {
         self.inner.wait_resize(sector_count).await

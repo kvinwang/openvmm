@@ -237,6 +237,15 @@ pub trait DiskIo: 'static + Send + Sync + Inspect {
     /// Issues an asynchronous flush operation to the disk.
     fn sync_cache(&self) -> impl Future<Output = Result<(), DiskError>> + Send;
 
+    /// Permanently shut down the backend after all frontend I/O has stopped.
+    ///
+    /// Unlike `sync_cache`, this is a lifecycle operation. Backends with
+    /// session metadata (for example, a VHDX log GUID) use it to leave their
+    /// on-disk state clean. The default is a no-op.
+    fn shutdown(&self) -> impl Future<Output = Result<(), DiskError>> + Send {
+        ready(Ok(()))
+    }
+
     /// Waits for the disk sector count to change from the specified value.
     ///
     /// Returns the new sector count once [`DiskIo::sector_count`] would return
@@ -264,6 +273,11 @@ pub trait DiskIo: 'static + Send + Sync + Inspect {
 pub struct Disk(#[inspect(flatten)] Arc<DiskInner>);
 
 impl Disk {
+    /// Returns the backend type name for diagnostics.
+    pub fn disk_type(&self) -> &str {
+        self.0.disk.disk_type()
+    }
+
     fn inspect_extra(&self, resp: &mut inspect::Response<'_>) {
         resp.field("disk_type", self.0.disk.disk_type())
             .field("sector_count", self.0.disk.sector_count())
@@ -443,6 +457,11 @@ impl Disk {
         self.0.disk.sync_cache()
     }
 
+    /// Permanently shut down this disk backend.
+    pub fn shutdown(&self) -> impl use<'_> + Future<Output = Result<(), DiskError>> + Send {
+        self.0.disk.shutdown()
+    }
+
     /// Waits for the disk sector count to change from the specified value.
     pub fn wait_resize(&self, sector_count: u64) -> impl use<'_> + Future<Output = u64> {
         self.0.disk.wait_resize(sector_count)
@@ -494,6 +513,7 @@ trait DynDisk: Send + Sync + Inspect {
     ) -> IoFuture<'a>;
 
     fn sync_cache(&self) -> IoFuture<'_>;
+    fn shutdown(&self) -> IoFuture<'_>;
 
     fn wait_resize<'a>(
         &'a self,
@@ -545,5 +565,9 @@ impl<T: DiskIo> DynDisk for T {
 
     fn sync_cache(&self) -> IoFuture<'_> {
         StackFuture::from_or_box(self.sync_cache())
+    }
+
+    fn shutdown(&self) -> IoFuture<'_> {
+        StackFuture::from_or_box(self.shutdown())
     }
 }

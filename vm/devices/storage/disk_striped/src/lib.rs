@@ -403,6 +403,22 @@ impl DiskIo for StripedDisk {
         Ok(())
     }
 
+    async fn shutdown(&self) -> Result<(), DiskError> {
+        let all_futures = self
+            .block_devices
+            .iter()
+            .enumerate()
+            .map(|(disk_index, disk)| async move {
+                disk.shutdown().await.map_err(|err| LowerError {
+                    index: disk_index,
+                    err,
+                })
+            })
+            .collect();
+        await_all_and_check(all_futures).await?;
+        Ok(())
+    }
+
     async fn unmap(
         &self,
         start_sector: u64,

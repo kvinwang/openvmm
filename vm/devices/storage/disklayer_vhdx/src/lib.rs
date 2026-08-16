@@ -39,7 +39,7 @@ use vhdx::WriteRange;
 #[derive(Inspect)]
 pub struct VhdxLayer {
     #[inspect(skip)]
-    vhdx: VhdxFile<BlockingFile>,
+    vhdx: parking_lot::RwLock<Option<std::sync::Arc<VhdxFile<BlockingFile>>>>,
     #[inspect(skip)]
     file: BlockingFile,
     sector_size: u32,
@@ -48,6 +48,7 @@ pub struct VhdxLayer {
     block_size: u32,
     has_parent: bool,
     read_only: bool,
+    disk_id: [u8; 16],
 }
 
 impl VhdxLayer {
@@ -63,8 +64,9 @@ impl VhdxLayer {
         let sector_count = vhdx.disk_size() / sector_size as u64;
         let block_size = vhdx.block_size();
         let has_parent = vhdx.has_parent();
+        let disk_id = vhdx.page_83_data().into();
         Self {
-            vhdx,
+            vhdx: parking_lot::RwLock::new(Some(std::sync::Arc::new(vhdx))),
             file,
             sector_size,
             physical_sector_size,
@@ -72,7 +74,17 @@ impl VhdxLayer {
             block_size,
             has_parent,
             read_only,
+            disk_id,
         }
+    }
+
+    fn file(&self) -> Result<std::sync::Arc<VhdxFile<BlockingFile>>, DiskError> {
+        self.vhdx.read().clone().ok_or_else(|| {
+            DiskError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "VHDX layer is shut down",
+            ))
+        })
     }
 }
 
@@ -100,7 +112,7 @@ impl LayerIo for VhdxLayer {
     }
 
     fn disk_id(&self) -> Option<[u8; 16]> {
-        Some(self.vhdx.page_83_data().into())
+        Some(self.disk_id)
     }
 
     fn physical_sector_size(&self) -> u32 {
@@ -128,7 +140,23 @@ impl LayerIo for VhdxLayer {
     }
 
     async fn sync_cache(&self) -> Result<(), DiskError> {
-        self.vhdx.flush().await.map_err(vhdx_to_disk_error)
+        self.file()?.flush().await.map_err(vhdx_to_disk_error)
+    }
+
+    async fn shutdown(&self) -> Result<(), DiskError> {
+        let Some(file) = self.vhdx.write().take() else {
+            return Ok(());
+        };
+        let file = match std::sync::Arc::try_unwrap(file) {
+            Ok(file) => file,
+            Err(file) => {
+                *self.vhdx.write() = Some(file);
+                return Err(DiskError::Io(std::io::Error::other(
+                    "VHDX shutdown raced with in-flight I/O",
+                )));
+            }
+        };
+        file.close().await.map_err(vhdx_to_disk_error)
     }
 
     async fn read(
@@ -142,8 +170,8 @@ impl LayerIo for VhdxLayer {
 
         // Resolve the read into file-level ranges.
         let mut ranges = Vec::new();
-        let guard = self
-            .vhdx
+        let vhdx = self.file()?;
+        let guard = vhdx
             .resolve_read(offset, len, &mut ranges)
             .await
             .map_err(vhdx_to_disk_error)?;
@@ -218,8 +246,8 @@ impl LayerIo for VhdxLayer {
 
         // Resolve the write into file-level ranges.
         let mut ranges = Vec::new();
-        let guard = self
-            .vhdx
+        let vhdx = self.file()?;
+        let guard = vhdx
             .resolve_write(offset, len, &mut ranges)
             .await
             .map_err(vhdx_to_disk_error)?;
@@ -266,7 +294,7 @@ impl LayerIo for VhdxLayer {
 
         // If FUA, flush to stable storage.
         if fua {
-            self.vhdx.flush().await.map_err(vhdx_to_disk_error)?;
+            vhdx.flush().await.map_err(vhdx_to_disk_error)?;
         }
 
         Ok(())
@@ -290,7 +318,7 @@ impl LayerIo for VhdxLayer {
             vhdx::TrimMode::Zero
         };
 
-        self.vhdx
+        self.file()?
             .trim(vhdx::TrimRequest::new(mode, offset, length))
             .await
             .map_err(vhdx_to_disk_error)
@@ -425,19 +453,17 @@ mod tests {
                 .await
                 .unwrap();
 
-            // Flush to ensure data is on disk
+            // Shutdown drains the journal and clears the log GUID.
             disk.sync_cache().await.unwrap();
+            disk.shutdown().await.unwrap();
         }
 
         // Re-open and read back
         {
             let bf = BlockingFile::open(&path, false).unwrap();
             let bf2 = bf.clone();
-            let vhdx = VhdxFile::open(bf)
-                .allow_replay(true)
-                .read_only()
-                .await
-                .unwrap();
+            // A clean close must reopen without journal replay.
+            let vhdx = VhdxFile::open(bf).read_only().await.unwrap();
             let layer = VhdxLayer::new(vhdx, bf2, true);
             let disk = LayeredDisk::new(
                 true,

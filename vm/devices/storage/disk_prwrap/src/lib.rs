@@ -168,6 +168,10 @@ impl DiskIo for DiskWithReservations {
     fn sync_cache(&self) -> impl Future<Output = Result<(), DiskError>> + Send {
         self.inner.sync_cache()
     }
+
+    fn shutdown(&self) -> impl Future<Output = Result<(), DiskError>> + Send {
+        self.inner.shutdown()
+    }
 }
 
 #[async_trait]

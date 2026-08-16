@@ -1781,6 +1781,7 @@ dependencies = [
  "guid",
  "inspect",
  "pal_async",
+ "parking_lot",
  "scsi_buffers",
  "tempfile",
  "thiserror 2.0.16",

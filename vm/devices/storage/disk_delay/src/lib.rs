@@ -106,6 +106,10 @@ impl DiskIo for DelayDisk {
         self.inner.sync_cache().await
     }
 
+    async fn shutdown(&self) -> Result<(), DiskError> {
+        self.inner.shutdown().await
+    }
+
     /// Passthrough
     async fn wait_resize(&self, sector_count: u64) -> u64 {
         self.inner.wait_resize(sector_count).await

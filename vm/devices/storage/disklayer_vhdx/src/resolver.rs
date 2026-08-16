@@ -54,6 +54,11 @@ impl AsyncResolveResource<DiskLayerHandleKind, VhdxDiskLayerHandle> for VhdxDisk
         } else {
             let driver = input.driver_source.simple();
             VhdxFile::open(file)
+                // A non-zero log GUID is the normal result of process or host
+                // failure. Writable opens must replay the validated journal
+                // before accepting new I/O rather than requiring qemu-img as
+                // an out-of-band repair step.
+                .allow_replay(true)
                 .writable(&driver)
                 .await
                 .map_err(ResolveVhdxError::Open)?

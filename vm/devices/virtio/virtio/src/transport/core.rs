@@ -68,7 +68,7 @@ pub(crate) struct VirtioTransportCore {
     #[inspect(rename = "device", send = "DeviceCommand::Inspect")]
     pub device_sender: mesh::Sender<DeviceCommand>,
     #[inspect(skip)]
-    pub _device_task: Task<()>,
+    pub _device_task: Option<Task<()>>,
     pub state: TransportState,
     pub device_feature: VirtioDeviceFeatures,
     #[inspect(hex)]
@@ -93,6 +93,17 @@ pub(crate) struct VirtioTransportCore {
     pub pending_status_deferred: Option<DeferredWrite>,
     #[inspect(with = "Vec::len")]
     pub stalled_io: Vec<StalledIo>,
+}
+
+impl Drop for VirtioTransportCore {
+    fn drop(&mut self) {
+        // Dropping `device_sender` closes the command channel. Detach rather
+        // than cancel the receiver task so it can drain queues and run the
+        // device's permanent shutdown hook before the VM executor exits.
+        if let Some(task) = self._device_task.take() {
+            task.detach();
+        }
+    }
 }
 
 impl VirtioTransportCore {
@@ -137,7 +148,7 @@ impl VirtioTransportCore {
 
         Ok(Self {
             device_sender: sender,
-            _device_task,
+            _device_task: Some(_device_task),
             state: TransportState::Ready,
             device_feature,
             device_feature_select: 0,

@@ -281,6 +281,7 @@ async fn open_simple_disk(
     disk_type: Resource<DiskHandleKind>,
     read_only: bool,
     driver_source: &VmTaskDriverSource,
+    opened_disks: &mut Vec<Disk>,
 ) -> anyhow::Result<Disk> {
     let disk = resolver
         .resolve(
@@ -291,6 +292,7 @@ async fn open_simple_disk(
             },
         )
         .await?;
+    opened_disks.push(disk.0.clone());
     Ok(disk.0)
 }
 
@@ -727,6 +729,9 @@ pub(crate) struct LoadedVm {
 struct LoadedVmInner {
     driver_source: VmTaskDriverSource,
     resolver: ResourceResolver,
+    /// Strong handles retained so backend lifecycle shutdown runs after all
+    /// device units have stopped but before the device executor exits.
+    opened_disks: Vec<Disk>,
     partition_unit: PartitionUnit,
     partition: Arc<dyn HvlitePartition>,
     chipset_devices: ChipsetDevices,
@@ -1424,10 +1429,18 @@ impl InitializedVm {
             unimplemented!("guest state encryption not supported on openvmm");
         }
 
+        let mut opened_disks = Vec::new();
         let vmgs = match cfg.vmgs {
             Some(VmgsResource::Disk(disk)) => Some(
                 vmgs::Vmgs::try_open(
-                    open_simple_disk(&resolver, disk.disk, false, &driver_source).await?,
+                    open_simple_disk(
+                        &resolver,
+                        disk.disk,
+                        false,
+                        &driver_source,
+                        &mut opened_disks,
+                    )
+                    .await?,
                     None,
                     true,
                     false,
@@ -1437,7 +1450,14 @@ impl InitializedVm {
             ),
             Some(VmgsResource::ReprovisionOnFailure(disk)) => Some(
                 vmgs::Vmgs::try_open(
-                    open_simple_disk(&resolver, disk.disk, false, &driver_source).await?,
+                    open_simple_disk(
+                        &resolver,
+                        disk.disk,
+                        false,
+                        &driver_source,
+                        &mut opened_disks,
+                    )
+                    .await?,
                     None,
                     true,
                     true,
@@ -1447,7 +1467,14 @@ impl InitializedVm {
             ),
             Some(VmgsResource::Reprovision(disk)) => Some(
                 vmgs::Vmgs::request_format(
-                    open_simple_disk(&resolver, disk.disk, false, &driver_source).await?,
+                    open_simple_disk(
+                        &resolver,
+                        disk.disk,
+                        false,
+                        &driver_source,
+                        &mut opened_disks,
+                    )
+                    .await?,
                     None,
                 )
                 .await
@@ -1685,10 +1712,15 @@ impl InitializedVm {
                         // counterpart (which carries any per-disk SCSI parameters via
                         // SimpleScsiDiskHandle) is offered separately as a VMBus device; the two
                         // paths are not yet unified.
-                        let disk =
-                            open_simple_disk(&resolver, disk_type, read_only, &driver_source)
-                                .await
-                                .context("failed to open IDE disk")?;
+                        let disk = open_simple_disk(
+                            &resolver,
+                            disk_type,
+                            read_only,
+                            &driver_source,
+                            &mut opened_disks,
+                        )
+                        .await
+                        .context("failed to open IDE disk")?;
 
                         ide::DriveMedia::hard_disk(disk)
                     }
@@ -1768,9 +1800,15 @@ impl InitializedVm {
                     read_only,
                 } = disk_cfg;
 
-                let disk = open_simple_disk(&resolver, disk_type, read_only, &driver_source)
-                    .await
-                    .context("failed to open floppy disk")?;
+                let disk = open_simple_disk(
+                    &resolver,
+                    disk_type,
+                    read_only,
+                    &driver_source,
+                    &mut opened_disks,
+                )
+                .await
+                .context("failed to open floppy disk")?;
                 tracing::trace!("floppy opened based on config into DriveRibbon");
 
                 if index == 0 {
@@ -2956,6 +2994,7 @@ impl InitializedVm {
             inner: LoadedVmInner {
                 driver_source,
                 resolver,
+                opened_disks,
                 partition_unit,
                 partition,
                 chipset_devices: devices,
@@ -3811,9 +3850,22 @@ impl LoadedVm {
             }
         }
 
+        if self.running {
+            self.state_units.stop().await;
+            self.running = false;
+        }
         self.inner.partition_unit.teardown().await;
         if let Some(vmbus) = self.inner.vmbus_server {
             vmbus.remove().await.shutdown().await;
+        }
+        for disk in &self.inner.opened_disks {
+            if let Err(err) = disk.shutdown().await {
+                tracing::error!(
+                    disk_type = disk.disk_type(),
+                    error = &err as &dyn std::error::Error,
+                    "failed to shut down disk backend"
+                );
+            }
         }
     }
 
