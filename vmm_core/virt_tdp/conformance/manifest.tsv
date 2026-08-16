@@ -1,0 +1,14 @@
+# id	timeout_seconds	minimum_cpus	requires	description
+cpu.enumeration	10	1	none	Linux enumerates the configured processor count
+cpu.affinity	10	1	none	Every configured processor accepts an affinity-bound task
+smp.cross_cpu_fifo	30	2	none	CPU0 exchanges 256 ordered wakeups with every AP
+apic.reschedule_ipi	30	2	none	Every AP receives a reschedule IPI during cross-CPU wakeup
+apic.nmi_shorthand	15	2	none	All-excluding-self shorthand delivers an NMI to every AP
+apic.init_sipi_hotplug	20	2	none	CPU1 completes an offline and online INIT/SIPI cycle
+time.monotonic	10	1	none	Monotonic time and timer wakeups advance while the guest sleeps
+memory.anonymous_zero	30	1	none	Fresh anonymous pages are zero and copy-on-write is isolated
+cpu.fpu_smp	45	2	none	Affinity-bound SIMD workloads retain deterministic FPU state
+block.enumeration	10	1	block	The virtio block device is enumerated
+block.interrupt_io	45	1	block	Repeated block write/read completions preserve data
+network.enumeration	15	1	network	The virtio network link can be enabled
+network.tx_completion	20	1	network	Raw Ethernet transmit descriptors complete repeatedly

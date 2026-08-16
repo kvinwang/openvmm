@@ -204,6 +204,14 @@ With an expected CPU count greater than one, the initramfs emits separate
 `TIME`, `BLOCK`, and `NETWORK` pass markers so the first missing capability is
 unambiguous.
 
+For systematic regression rather than a single qualification path, use
+`conformance/`. Its manifest gives every case a stable ID, timeout, minimum
+CPU count, device requirement, and description. Cases execute in isolated
+processes and emit a versioned `VIRT_TDP_CTS` serial protocol. The host runner
+rejects incomplete or inconsistent result sets, requires repeated clean
+OpenVMM shutdowns, and writes per-boot and aggregate JSON. See
+`conformance/README.md` for the coverage matrix and reproduction commands.
+
 ## Product integration boundary
 
 The OpenVMM feature wiring is complete: `virt_tdp` is enabled by the OpenVMM
