@@ -96,6 +96,12 @@ pub struct TdpProcessor {
     /// VM-entry event field. It remains pending while another exception is
     /// queued or the guest is blocking NMIs.
     pub(crate) nmi_pending: bool,
+    /// An NMI written into the VM-entry event field by the APIC model. While
+    /// this is armed, the NMI trap is disabled for exactly one real entry.
+    pub(crate) nmi_injection_pending: bool,
+    /// Exception bitmap programmed for normal entries. Bit 2 is always set to
+    /// contain external NMIs that TD Partitioning occasionally leaks to L2.
+    pub(crate) exception_bitmap: u32,
     /// The last exit reason, and how many times it has repeated, to catch a
     /// loop the VMM handles silently and therefore never reports.
     pub(crate) last_reason: u16,
@@ -350,6 +356,8 @@ impl TdpProcessor {
             injection_pending: false,
             injection_armed: false,
             nmi_pending: false,
+            nmi_injection_pending: false,
+            exception_bitmap: 1 << 2,
             last_reason: u16::MAX,
             same_reason: 0,
             pending_eois: Vec::new(),
@@ -630,7 +638,11 @@ impl TdpProcessor {
         let bitmap: u32 = std::env::var("VIRT_TDP_TRAP_EXCEPTIONS")
             .ok()
             .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
-            .unwrap_or(0);
+            .unwrap_or(0)
+            | (1 << 2);
+        drop(vm);
+        self.exception_bitmap = bitmap;
+        let vm = self.vm();
         vm.write_vmcs(f::EXCEPTION_BITMAP, Width::Bits32, bitmap.into())?;
         vm.write_vmcs(f::PF_EC_MASK, Width::Bits32, 0)?;
         vm.write_vmcs(f::PF_EC_MATCH, Width::Bits32, 0)?;
@@ -749,19 +761,44 @@ impl TdpProcessor {
             );
         }
         let context_gpa = self.context.gpa();
-        // Take back an exception the previous entry already delivered, and
-        // arm one that service() wrote after that entry returned.
+        // Take back an event only after an entry actually accepted it. A
+        // kernel kick may win before TDG.VP.ENTER, in which case the field
+        // must remain armed for the next attempt.
         let clear = std::mem::take(&mut self.injection_armed);
-        if self.injection_pending {
-            self.injection_pending = false;
-            self.injection_armed = true;
-        }
         let vm = self.vm();
-        if clear && !self.injection_armed {
+        if clear && !self.injection_pending {
             vm.write_vmcs(vmcs::field::ENTRY_INTR_INFO, Width::Bits32, 0)?;
         }
 
-        match vm.enter(self.vp_index.index(), context_gpa)? {
+        // Trap unexplained external NMIs. An NMI deliberately queued by the
+        // APIC model gets one entry with the trap removed so the guest can
+        // consume it normally.
+        if self.nmi_injection_pending {
+            vm.write_vmcs(
+                vmcs::field::EXCEPTION_BITMAP,
+                Width::Bits32,
+                u64::from(self.exception_bitmap & !(1 << 2)),
+            )?;
+        }
+
+        let result = vm.enter(self.vp_index.index(), context_gpa)?;
+        drop(vm);
+        if !matches!(result, VpEnterResult::NoEntry) {
+            if self.injection_pending {
+                self.injection_pending = false;
+                self.injection_armed = true;
+            }
+            if std::mem::take(&mut self.nmi_injection_pending) {
+                self.vm().write_vmcs(
+                    vmcs::field::EXCEPTION_BITMAP,
+                    Width::Bits32,
+                    self.exception_bitmap.into(),
+                )?;
+            }
+        }
+
+        let vm = self.vm();
+        match result {
             VpEnterResult::NoEntry => Ok(Exit::Resume),
             VpEnterResult::HostRouted { reason } => {
                 if reason == exit::EXTERNAL_INTERRUPT {
@@ -1438,6 +1475,7 @@ impl TdpProcessor {
                 // Valid, NMI delivery type, architectural NMI vector 2.
                 vm.write_vmcs(vmcs::field::ENTRY_INTR_INFO, Width::Bits32, 0x8000_0202)?;
                 self.injection_pending = true;
+                self.nmi_injection_pending = true;
                 self.nmi_pending = false;
             }
         }
@@ -1577,9 +1615,11 @@ impl TdpProcessor {
                 .await;
             }
             exit::EXCEPTION_NMI => {
-                // Only reached when the exception bitmap is set for diagnosis.
-                // Report it and hand it straight back, so the guest's own
-                // handler still runs and the loop keeps its shape.
+                // Bit 2 is always trapped. Deliberate APIC-model NMIs get one
+                // entry with this bit cleared, so reaching here identifies an
+                // external NMI that escaped TD Partitioning's NMI-exiting
+                // control. Contain it instead of injecting unexplained host
+                // state into the tenant.
                 let (info, code, cr3) = {
                     let vm = self.vm();
                     (
@@ -1591,38 +1631,47 @@ impl TdpProcessor {
                             .unwrap_or(0),
                     )
                 };
-                let first = self.exceptions == 0;
-                self.exceptions += 1;
-                if first {
-                    tracing::info!(
-                        vector = info & 0xff,
-                        code,
+                if info & 0xff == 2 {
+                    tracing::warn!(
+                        vp = self.vp_index.index(),
                         rip = self.regs.rip,
-                        fault_va = qualification,
                         cr3,
-                        rax = self.regs.rax,
-                        rbx = self.regs.rbx,
-                        rcx = self.regs.rcx,
-                        rdx = self.regs.rdx,
-                        rsi = self.regs.rsi,
-                        rdi = self.regs.rdi,
-                        rsp = self.regs.rsp,
-                        "L2 exception"
+                        "contained an unexpected external L2 NMI"
                     );
-                    if info & 0xff == 14 {
-                        for (level, table, index, entry) in self.page_walk(cr3, qualification) {
-                            tracing::info!(level, table, index, entry, "L2 faulting page walk");
+                } else {
+                    let first = self.exceptions == 0;
+                    self.exceptions += 1;
+                    if first {
+                        tracing::info!(
+                            vector = info & 0xff,
+                            code,
+                            rip = self.regs.rip,
+                            fault_va = qualification,
+                            cr3,
+                            rax = self.regs.rax,
+                            rbx = self.regs.rbx,
+                            rcx = self.regs.rcx,
+                            rdx = self.regs.rdx,
+                            rsi = self.regs.rsi,
+                            rdi = self.regs.rdi,
+                            rsp = self.regs.rsp,
+                            "L2 exception"
+                        );
+                        if info & 0xff == 14 {
+                            for (level, table, index, entry) in self.page_walk(cr3, qualification) {
+                                tracing::info!(level, table, index, entry, "L2 faulting page walk");
+                            }
                         }
                     }
+                    {
+                        let vm = self.vm();
+                        vm.write_vmcs(vmcs::field::ENTRY_INTR_INFO, Width::Bits32, info)
+                            .map_err(|err| dev.fatal_error(err.into()))?;
+                        vm.write_vmcs(vmcs::field::ENTRY_EXCEPTION_EC, Width::Bits32, code)
+                            .map_err(|err| dev.fatal_error(err.into()))?;
+                    }
+                    self.injection_pending = true;
                 }
-                {
-                    let vm = self.vm();
-                    vm.write_vmcs(vmcs::field::ENTRY_INTR_INFO, Width::Bits32, info)
-                        .map_err(|err| dev.fatal_error(err.into()))?;
-                    vm.write_vmcs(vmcs::field::ENTRY_EXCEPTION_EC, Width::Bits32, code)
-                        .map_err(|err| dev.fatal_error(err.into()))?;
-                }
-                self.injection_pending = true;
             }
             exit::EXTERNAL_INTERRUPT | exit::INTERRUPT_WINDOW => {}
             exit::VIRTUALIZED_EOI => {
