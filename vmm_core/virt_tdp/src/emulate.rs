@@ -155,8 +155,7 @@ impl EmulatorSupport for TdpProcessor {
         // Low memory counts: it is not the guest's, but the VMM backs it and
         // the emulator can reach it, which is the only sense in which "mapped"
         // matters here.
-        let range = self.memory.gpa_range();
-        range.contains(&gpa) || gpa < crate::lowmem::LOW_MEMORY_END
+        self.memory.contains_range(gpa..gpa + 1) || gpa < crate::lowmem::LOW_MEMORY_END
     }
 
     fn lapic_base_address(&self) -> Option<u64> {

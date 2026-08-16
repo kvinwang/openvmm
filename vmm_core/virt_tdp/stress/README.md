@@ -23,9 +23,18 @@ available in the TD Partitioning L2-exit ABI and therefore those reads cannot
 be correctly replayed by an instruction emulator. The driver must accept the
 range through `0x100000` (older revisions capped it at `0xa0000`).
 
-The hardware host used for validation has four 1 GiB hugepages, so use a 4 GiB
-L2. VP wakeup uses the driver capability-negotiated kernel-IPI path; POSIX
-signals are not delivered across `TDG.VP.ENTER`.
+L2 RAM is allocated at 4 KiB granularity. The allocator uses 1 GiB hugetlb
+pages for the main body, 2 MiB hugetlb pages for the remainder, and
+driver-owned base pages only for a final remainder smaller than 2 MiB. Reserve
+both hugepage sizes on the L1; boot-time reservation keeps 2 MiB pages clustered
+and reduces the number of sparse RAM extents advertised to the guest. The x86
+zero-page e820 table has 128 entries, so OpenVMM rejects more than 96 L2 RAM
+extents rather than silently hiding memory from Linux.
+
+The hardware host used for validation has four 1 GiB hugepages. Its 2 MiB pool
+was configured with 512 pages for mixed-size validation. VP wakeup uses the
+driver capability-negotiated kernel-IPI path; POSIX signals are not delivered
+across `TDG.VP.ENTER`.
 
 The backend does not expose architectural PMU capabilities because PMU state
 is not virtualized across L2 entry. It also traps external NMIs by default:
@@ -64,6 +73,14 @@ tmux new-session -d -s virt-tdp-ubuntu-stress \
     --disk /path/to/ubuntu-docker.vhdx \
     --output-dir /path/to/results --processors 8 --memory-gib 4 \
     --duration 60 --timeout 1800 > /path/to/runner.log 2>&1'
+```
+
+Use `--memory-mib` for an exact MiB size or `--memory-kib` for a 4 KiB-aligned
+size. For example, the following requests exactly 3 GiB + 2 MiB + 12 KiB and
+exercises every backing tier:
+
+```bash
+--memory-kib 3147788
 ```
 
 `summary.json` is the machine-readable gate. A pass requires every case marker

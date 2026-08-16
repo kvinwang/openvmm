@@ -50,6 +50,9 @@ pub struct Config {
     /// L1's own address — has to have the layout built around where its memory
     /// actually is.
     pub ram_start_address: Option<u64>,
+    /// Exact ordinary-RAM ranges for a backend with fixed guest addresses.
+    /// Empty means the layout engine places RAM normally.
+    pub fixed_ram_ranges: Vec<MemoryRange>,
     pub virtio_devices: Vec<(VirtioBus, Resource<VirtioDeviceHandle>)>,
     #[cfg(windows)]
     pub vpci_resources: Vec<virt_whp::device::DeviceHandle>,

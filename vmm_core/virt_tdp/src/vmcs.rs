@@ -301,6 +301,6 @@ pub fn configure_64bit(vm: &L2Vm<'_>, state: &GuestState) -> Result<()> {
 /// virtualization exceptions. A guest here has none of them: it is told it is
 /// bare metal, and every TDCALL it might make would exit to the VMM anyway.
 /// Clearing them explicitly beats inheriting whatever the module left behind.
-pub fn disable_optional_l2_features(vm: &L2Vm<'_>) -> anyhow::Result<()> {
+pub fn disable_optional_l2_features(vm: &L2Vm<'_>) -> Result<()> {
     vm.write_tdvps(crate::tdx::MD_TDVPS_L2_CTLS + u64::from(vm.vm_id()), 0, 0x7)
 }

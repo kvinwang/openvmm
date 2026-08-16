@@ -18,10 +18,10 @@ pub enum TdpError {
     NotAnL1Vmm,
     #[error("the TDCALL device is unavailable; is the dstack_tdcall module loaded?")]
     NoDevice(#[source] anyhow::Error),
-    #[error("the layout puts guest memory at {:#x}..{:#x}, but this L2's memory is at {:#x}..{:#x}, and aliasing cannot move a page", requested.start, requested.end, available.start, available.end)]
+    #[error("the layout puts guest memory at {:#x}..{:#x}, but the L2's physical extents are {available:?}, and aliasing cannot move a page", requested.start, requested.end)]
     MemoryLayout {
         requested: std::ops::Range<u64>,
-        available: std::ops::Range<u64>,
+        available: Vec<std::ops::Range<u64>>,
     },
     #[error("could not determine partition capabilities: {0}")]
     Capabilities(String),
@@ -51,14 +51,18 @@ pub struct Tdp {
 
 impl Tdp {
     pub fn new() -> Result<Self, TdpError> {
-        let device = TdcallDevice::open().map_err(TdpError::NoDevice)?;
+        let device = Arc::new(TdcallDevice::open().map_err(TdpError::NoDevice)?);
+        Self::from_device(device)
+    }
+
+    pub fn from_device(device: Arc<TdcallDevice>) -> Result<Self, TdpError> {
         let l2_slots = L2Vm::num_l2_vms(&device)?;
         if l2_slots == 0 {
             return Err(TdpError::NotAnL1Vmm);
         }
         device.claim_vm(crate::hypervisor::FIRST_L2_SLOT)?;
         Ok(Self {
-            device: Arc::new(device),
+            device,
             memory: None,
             l2_slots,
         })
@@ -100,17 +104,26 @@ static RESERVED: std::sync::OnceLock<Arc<TdpMemory>> = std::sync::OnceLock::new(
 ///
 /// Returns the guest physical address the memory layout must be built around,
 /// and the file backing it, which a VMM that maps guest memory itself needs.
-pub fn reserve_guest_memory(size: usize) -> anyhow::Result<(u64, std::fs::File)> {
+pub fn reserve_guest_memory(
+    size: usize,
+) -> anyhow::Result<(Vec<std::ops::Range<u64>>, std::fs::File)> {
     let memory = match RESERVED.get() {
-        Some(memory) => memory.clone(),
+        Some(memory) => {
+            anyhow::ensure!(
+                memory.region().len() == size,
+                "L2 memory was already reserved as {:#x} bytes, not the requested {size:#x}",
+                memory.region().len()
+            );
+            memory.clone()
+        }
         None => {
             let memory = Arc::new(TdpMemory::new(HugeRegion::alloc(size)?));
             let _ = RESERVED.set(memory.clone());
             RESERVED.get().expect("just set").clone()
         }
     };
-    let file = memory.region().file().try_clone()?;
-    Ok((memory.gpa_range().start, file))
+    let file = memory.region().device().try_clone_file()?;
+    Ok((memory.gpa_ranges(), file))
 }
 
 /// The memory reserved by [`reserve_guest_memory`], if any.
@@ -217,8 +230,12 @@ impl TdpMemory {
 
     /// The guest physical range this memory will appear at, which is not a
     /// choice.
-    pub fn gpa_range(&self) -> std::ops::Range<u64> {
-        self.region.gpa()..self.region.gpa() + self.region.len() as u64
+    pub fn gpa_ranges(&self) -> Vec<std::ops::Range<u64>> {
+        self.region
+            .segments()
+            .iter()
+            .map(|segment| segment.gpa..segment.gpa + segment.len as u64)
+            .collect()
     }
 
     pub fn region(&self) -> &HugeRegion {
@@ -229,28 +246,75 @@ impl TdpMemory {
         &mut self.region
     }
 
+    fn page_index(&self, gpa: u64) -> Option<usize> {
+        let mut page_base = 0;
+        for segment in self.region.segments() {
+            let end = segment.gpa + segment.len as u64;
+            if gpa >= segment.gpa && gpa < end {
+                return Some(page_base + ((gpa - segment.gpa) / 4096) as usize);
+            }
+            page_base += segment.len / 4096;
+        }
+        None
+    }
+
+    pub fn backing_offset(&self, gpa: u64, len: usize) -> Option<usize> {
+        let end = gpa.checked_add(len as u64)?;
+        let mut offset = 0;
+        for segment in self.region.segments() {
+            let segment_end = segment.gpa + segment.len as u64;
+            if gpa >= segment.gpa && end <= segment_end {
+                return Some(offset + (gpa - segment.gpa) as usize);
+            }
+            offset += segment.len;
+        }
+        None
+    }
+
+    pub fn contains_range(&self, range: std::ops::Range<u64>) -> bool {
+        range
+            .end
+            .checked_sub(range.start)
+            .and_then(|len| self.backing_offset(range.start, len as usize))
+            .is_some()
+    }
+
     /// Whether any page in the range has been aliased into the L2.
     pub fn any_aliased(&self, range: std::ops::Range<u64>) -> bool {
-        let base = self.region.gpa();
         let aliased = self.aliased.lock();
-        range
-            .step_by(4096)
-            .filter_map(|gpa| gpa.checked_sub(base))
-            .any(|offset| {
-                aliased
-                    .get((offset / 4096) as usize)
-                    .copied()
-                    .unwrap_or(false)
-            })
+        let mut page_base = 0;
+        for segment in self.region.segments() {
+            let segment_end = segment.gpa + segment.len as u64;
+            let start = range.start.max(segment.gpa);
+            let end = range.end.min(segment_end);
+            if start < end {
+                let first = page_base + ((start - segment.gpa) / 4096) as usize;
+                let last = page_base + (end - segment.gpa).div_ceil(4096) as usize;
+                if aliased[first..last].iter().any(|&value| value) {
+                    return true;
+                }
+            }
+            page_base += segment.len / 4096;
+        }
+        false
     }
 
     /// Alias a range into the L2, skipping pages already done.
     pub fn map(&self, vm: &L2Vm<'_>, range: std::ops::Range<u64>) -> anyhow::Result<usize> {
-        let base = self.region.gpa();
+        anyhow::ensure!(
+            range.start % 4096 == 0 && range.end % 4096 == 0,
+            "L2 alias creation must be page aligned"
+        );
+        anyhow::ensure!(
+            self.contains_range(range.clone()),
+            "L2 alias range is outside a physical extent"
+        );
         let mut aliased = self.aliased.lock();
         let mut mapped = 0;
         for gpa in range.step_by(4096) {
-            let index = ((gpa - base) / 4096) as usize;
+            let Some(index) = self.page_index(gpa) else {
+                anyhow::bail!("gpa {gpa:#x} is outside this partition's memory");
+            };
             let Some(done) = aliased.get_mut(index) else {
                 anyhow::bail!("gpa {gpa:#x} is outside this partition's memory");
             };
@@ -272,30 +336,31 @@ impl TdpMemory {
             range.start,
             range.end
         );
-        let base = self.region.gpa();
-        let end = base + self.region.len() as u64;
-        let start = range.start.max(base);
-        let end = range.end.min(end);
-        if start >= end {
-            return Ok(0);
-        }
-
         let mut aliased = self.aliased.lock();
         let mut unmapped = 0;
-        for gpa in (start..end).step_by(4096) {
-            let index = ((gpa - base) / 4096) as usize;
-            if !aliased[index] {
-                continue;
+        let mut page_base = 0;
+        for segment in self.region.segments() {
+            let segment_end = segment.gpa + segment.len as u64;
+            let start = range.start.max(segment.gpa);
+            let end = range.end.min(segment_end);
+            for gpa in (start..end).step_by(4096) {
+                let index = page_base + ((gpa - segment.gpa) / 4096) as usize;
+                if !aliased[index] {
+                    continue;
+                }
+                vm.drop_page_alias(gpa)?;
+                aliased[index] = false;
+                unmapped += 1;
             }
-            vm.drop_page_alias(gpa)?;
-            aliased[index] = false;
-            unmapped += 1;
+            page_base += segment.len / 4096;
         }
         Ok(unmapped)
     }
 
     pub fn unmap_all(&self, vm: &L2Vm<'_>) -> anyhow::Result<usize> {
-        self.unmap(vm, self.gpa_range())
+        self.gpa_ranges()
+            .into_iter()
+            .try_fold(0, |total, range| Ok(total + self.unmap(vm, range)?))
     }
 }
 

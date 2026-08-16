@@ -135,6 +135,8 @@ pub(super) struct MemoryLayoutInput<'a> {
     /// This is used on aarch64 Linux direct boot to avoid the low GPA region
     /// that conflicts with iommufd IOVA reservations.
     pub ram_start_address: u64,
+    /// Exact RAM extents supplied by a backend whose GPAs cannot be moved.
+    pub fixed_ram_ranges: &'a [MemoryRange],
     /// Size in bytes of the VTL2 framebuffer mapping. When non-zero, a
     /// `PostMmio` allocation is created and the resolved GPA is returned in
     /// `ResolvedMemoryLayout::vtl2_framebuffer_gpa_base`.
@@ -413,22 +415,46 @@ pub(super) fn resolve_memory_layout(
         }
     }
 
+    if !input.fixed_ram_ranges.is_empty() {
+        anyhow::ensure!(
+            input.node_mem_sizes.len() == 1,
+            "fixed RAM ranges currently require one NUMA node"
+        );
+        let fixed_size = input
+            .fixed_ram_ranges
+            .iter()
+            .try_fold(0_u64, |total, range| total.checked_add(range.len()))
+            .context("fixed RAM size overflow")?;
+        anyhow::ensure!(
+            fixed_size == input.node_mem_sizes[0],
+            "fixed RAM ranges contain {fixed_size:#x} bytes, expected {:#x}",
+            input.node_mem_sizes[0]
+        );
+        for (index, &range) in input.fixed_ram_ranges.iter().enumerate() {
+            anyhow::ensure!(!range.is_empty(), "fixed RAM range {index} is empty");
+            builder.fixed(format!("fixed-ram{index}"), range);
+            ram_ranges_by_node[0].push(range);
+        }
+    }
+
     // RAM request order is part of the NUMA compatibility contract: the first
     // request maps to vnode 0, the second to vnode 1, and so on. Memory-less
     // nodes (size 0) are skipped so the layout allocator never sees a
     // zero-size request. For GB-sized nodes, use GB alignment so holes do not
     // create sub-GB RAM chunks. For sub-GB nodes, use 2 MB alignment to avoid
     // wasting a full GB of address space per small node.
-    for (vnode, (ram_ranges, &ram_size)) in ram_ranges_by_node
-        .iter_mut()
-        .zip(input.node_mem_sizes)
-        .enumerate()
-    {
-        if ram_size == 0 {
-            continue;
+    if input.fixed_ram_ranges.is_empty() {
+        for (vnode, (ram_ranges, &ram_size)) in ram_ranges_by_node
+            .iter_mut()
+            .zip(input.node_mem_sizes)
+            .enumerate()
+        {
+            if ram_size == 0 {
+                continue;
+            }
+            let ram_alignment = if ram_size < GB { TWO_MB } else { GB };
+            builder.ram(format!("ram{vnode}"), ram_ranges, ram_size, ram_alignment);
         }
-        let ram_alignment = if ram_size < GB { TWO_MB } else { GB };
-        builder.ram(format!("ram{vnode}"), ram_ranges, ram_size, ram_alignment);
     }
 
     // VTL2 chipset MMIO is implementation-private — placed after all
@@ -696,6 +722,7 @@ mod tests {
             virtio_mmio_count: 0,
             vtl2_layout,
             ram_start_address: 0,
+            fixed_ram_ranges: &[],
             vtl2_framebuffer_size: 0,
             physical_address_size: 46,
         }
@@ -924,6 +951,27 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn fixed_sparse_ram_ranges_are_preserved() {
+        let ranges = [
+            MemoryRange::new(8 * GB..9 * GB),
+            MemoryRange::new(12 * GB..12 * GB + 512 * MB),
+        ];
+        let mut config = input(&[GB + 512 * MB], None);
+        config.ram_start_address = ranges[0].start();
+        config.fixed_ram_ranges = &ranges;
+
+        let actual = resolve_memory_layout(config).unwrap();
+        let actual_ranges = actual
+            .memory_layout
+            .ram()
+            .iter()
+            .map(|range| range.range)
+            .filter(|range| range.start() >= ranges[0].start())
+            .collect::<Vec<_>>();
+        assert_eq!(actual_ranges, ranges);
     }
 
     #[test]

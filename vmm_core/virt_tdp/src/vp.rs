@@ -523,9 +523,7 @@ impl TdpProcessor {
     }
 
     fn ram_offset(&self, gpa: u64, len: usize) -> Option<usize> {
-        let range = self.memory.gpa_range();
-        (gpa >= range.start && gpa.checked_add(len as u64)? <= range.end)
-            .then(|| (gpa - range.start) as usize)
+        self.memory.backing_offset(gpa, len)
     }
 
     fn read_ram_u64(&self, gpa: u64) -> Option<u64> {

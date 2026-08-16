@@ -119,16 +119,27 @@ const IOCTL_REGISTER_MEMORY: libc::c_ulong = iowr(4, size_of::<TdRegisterMemory>
 const IOCTL_GET_API: libc::c_ulong = ior(5, size_of::<TdApi>());
 const IOCTL_VP_ENTER: libc::c_ulong = iowr(6, size_of::<TdVpEnter>());
 const IOCTL_KICK_VP: libc::c_ulong = iow(7, size_of::<TdVpKick>());
+const IOCTL_FINALIZE_MEMORY: libc::c_ulong = ((IOC_MAGIC as libc::c_ulong) << 8) | 8;
 const ABI_VERSION: u32 = 1;
 const FEATURE_VP_ENTER: u64 = 1 << 0;
 const FEATURE_VP_KICK: u64 = 1 << 1;
+const FEATURE_MEMORY_PAGE_QUERY: u64 = 1 << 2;
+const FEATURE_MEMORY_FINALIZE: u64 = 1 << 3;
 const REGISTER_QUERY_HUGE_1G: u64 = 1 << 0;
+const REGISTER_QUERY_HUGE_2M: u64 = 1 << 1;
 
 /// Private memory shared between this process and an L2.
 pub struct TdMemory {
     ptr: *mut u8,
     len: usize,
     gpa: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TdAllocation {
+    pub gpa: u64,
+    pub len: usize,
+    offset: u64,
 }
 
 // The mapping is owned exclusively by this struct and the kernel keeps the
@@ -193,9 +204,21 @@ impl TdcallDevice {
             .write(true)
             .open("/dev/dstack_tdcall")
             .context("opening /dev/dstack_tdcall; is the dstack_tdcall module loaded?")?;
+        Self::from_file(file)
+    }
+
+    pub fn from_file(file: File) -> Result<Self> {
         let device = Self { file };
         device.check_api()?;
         Ok(device)
+    }
+
+    pub fn try_clone_file(&self) -> Result<File> {
+        self.file.try_clone().context("cloning the TDCALL device")
+    }
+
+    pub(crate) fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.file.as_raw_fd()
     }
 
     fn check_api(&self) -> Result<()> {
@@ -218,7 +241,10 @@ impl TdcallDevice {
             "unsupported dstack_tdcall ABI {} (expected {ABI_VERSION})",
             api.abi_version
         );
-        let required = FEATURE_VP_ENTER | FEATURE_VP_KICK;
+        let required = FEATURE_VP_ENTER
+            | FEATURE_VP_KICK
+            | FEATURE_MEMORY_PAGE_QUERY
+            | FEATURE_MEMORY_FINALIZE;
         anyhow::ensure!(
             api.features & required == required,
             "dstack_tdcall lacks required VP enter/kick capabilities ({:#x})",
@@ -331,6 +357,11 @@ impl TdcallDevice {
     /// and `TDG.MEM.PAGE.ATTR.WR` needs one, so allocation has to go through
     /// the driver rather than through mmap of anonymous memory.
     pub fn alloc(&self, size: usize, flags: u64) -> Result<TdMemory> {
+        let alloc = self.alloc_unmapped(size, flags)?;
+        self.map_allocation(alloc)
+    }
+
+    pub fn alloc_unmapped(&self, size: usize, flags: u64) -> Result<TdAllocation> {
         let mut alloc = TdAlloc {
             size: size as u64,
             flags,
@@ -350,7 +381,15 @@ impl TdcallDevice {
             std::io::Error::last_os_error()
         );
 
-        let len = alloc.size as usize;
+        Ok(TdAllocation {
+            gpa: alloc.gpa,
+            len: alloc.size as usize,
+            offset: alloc.offset,
+        })
+    }
+
+    fn map_allocation(&self, alloc: TdAllocation) -> Result<TdMemory> {
+        let len = alloc.len;
         // SAFETY: mapping the region the driver just reported, at its offset.
         let ptr = unsafe {
             libc::mmap(
@@ -375,6 +414,17 @@ impl TdcallDevice {
         })
     }
 
+    pub fn finalize_memory(&self) -> Result<()> {
+        // SAFETY: this ioctl has no pointer argument.
+        let rc = unsafe { libc::ioctl(self.file.as_raw_fd(), IOCTL_FINALIZE_MEMORY) };
+        anyhow::ensure!(
+            rc == 0,
+            "finalizing segmented L2 memory failed: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(())
+    }
+
     /// Claim and map the complete boot-reserved range configured in the
     /// driver. The zero size and GPA deliberately leave the range selection
     /// to the trusted kernel interface rather than to the VMM.
@@ -389,6 +439,10 @@ impl TdcallDevice {
 
     pub(crate) fn query_huge_1g(&self, address: *mut u8, size: usize) -> Result<u64> {
         self.register_memory_with_flags(address, size, REGISTER_QUERY_HUGE_1G)
+    }
+
+    pub(crate) fn query_huge_2m(&self, address: *mut u8, size: usize) -> Result<u64> {
+        self.register_memory_with_flags(address, size, REGISTER_QUERY_HUGE_2M)
     }
 
     fn register_memory_with_flags(&self, address: *mut u8, size: usize, flags: u64) -> Result<u64> {

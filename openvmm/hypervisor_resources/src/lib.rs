@@ -34,8 +34,10 @@ impl ResourceKind for HypervisorKind {
 /// around wherever the allocation lands.
 #[derive(MeshPayload)]
 pub struct TdpHandle {
-    /// Guest RAM size in bytes. Rounded up to whole 1 GiB hugepages.
+    /// Guest RAM size in bytes.
     pub memory_size: u64,
+    /// Physical extents, in the file-offset order exposed by `memory`.
+    pub memory_ranges: Vec<(u64, u64)>,
     /// The memory itself, already reserved.
     ///
     /// It travels as a descriptor because the worker runs in its own process

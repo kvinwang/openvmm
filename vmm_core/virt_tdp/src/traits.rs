@@ -249,7 +249,6 @@ impl PartitionMemoryMap for TdpMemoryMap {
         _writable: bool,
         _exec: bool,
     ) -> anyhow::Result<()> {
-        let range = self.memory.gpa_range();
         // The separately boot-reserved low window is published just before
         // first entry, after the loader has populated this backing.
         if addr + size as u64 <= crate::lowmem::LOW_MEMORY_END {
@@ -257,12 +256,10 @@ impl PartitionMemoryMap for TdpMemoryMap {
             return Ok(());
         }
         anyhow::ensure!(
-            addr >= range.start && addr + size as u64 <= range.end,
+            self.memory.contains_range(addr..addr + size as u64),
             "an L2's guest physical address is the L1's, so memory cannot be placed at \
-             {addr:#x}..{:#x}; this partition's memory is {:#x}..{:#x}",
-            addr + size as u64,
-            range.start,
-            range.end
+             {addr:#x}..{:#x}; this partition has no matching physical extent",
+            addr + size as u64
         );
         // The driver pinned and validated the complete file-backed mapping
         // before reporting this GPA, so no userspace PFN lookup is needed.
@@ -280,9 +277,7 @@ impl PartitionMemoryMap for TdpMemoryMap {
         // attributes cleared, and getting that wrong leaves the guest reading
         // a page it should no longer have — so it fails rather than pretends.
         let end = addr.checked_add(size).context("L2 unmap range overflow")?;
-        let range = self.memory.gpa_range();
-        let overlaps = addr < range.end && end > range.start;
-        if !overlaps || !self.memory.any_aliased(addr..end) {
+        if !self.memory.any_aliased(addr..end) {
             return Ok(());
         }
         let vm = crate::tdx::L2Vm::new(&self.partition.device, self.partition.vm_id);

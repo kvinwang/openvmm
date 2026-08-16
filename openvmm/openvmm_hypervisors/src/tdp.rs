@@ -25,9 +25,13 @@ const GIB: u64 = 1024 * 1024 * 1024;
 /// memory layout is built from the address these pages landed at, and that
 /// happens before the worker exists.
 fn reserve(memory_size: u64) -> anyhow::Result<Resource<HypervisorKind>> {
-    let (_base, file) = virt_tdp::reserve_guest_memory(memory_size as usize)?;
+    let (ranges, file) = virt_tdp::reserve_guest_memory(memory_size as usize)?;
     Ok(TdpHandle {
         memory_size,
+        memory_ranges: ranges
+            .into_iter()
+            .map(|range| (range.start, range.end - range.start))
+            .collect(),
         memory: Some(file.into()),
     }
     .into_resource())
@@ -56,8 +60,7 @@ impl hypervisor_resources::HypervisorProbe for TdpProbe {
                 // so its size is a property of the backend rather than of the
                 // VM configuration.
                 "memory" => {
-                    let gib: u64 = val.parse().context("expected a size in whole GiB")?;
-                    memory_size = gib * GIB;
+                    memory_size = parse_size(val)?;
                 }
                 _ => anyhow::bail!("unknown tdp parameter: {key}"),
             }
@@ -68,5 +71,45 @@ impl hypervisor_resources::HypervisorProbe for TdpProbe {
              num-l2-vms, or dstack's TDCALL driver is not loaded"
         );
         reserve(memory_size)
+    }
+}
+
+fn parse_size(value: &str) -> anyhow::Result<u64> {
+    let (number, unit) = value
+        .trim()
+        .split_at_checked(
+            value
+                .trim()
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(value.trim().len()),
+        )
+        .context("expected a byte count with an optional KiB, MiB, or GiB suffix")?;
+    let number: u64 = number.parse().context("expected a memory size")?;
+    let multiplier = match unit.to_ascii_lowercase().as_str() {
+        "" | "g" | "gib" => GIB,
+        "m" | "mib" => 1024 * 1024,
+        "k" | "kib" => 1024,
+        _ => anyhow::bail!("unsupported memory size suffix: {unit}"),
+    };
+    let size = number
+        .checked_mul(multiplier)
+        .context("memory size overflow")?;
+    anyhow::ensure!(
+        size != 0 && size % 4096 == 0,
+        "memory size must be 4 KiB aligned"
+    );
+    Ok(size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_flexible_page_aligned_sizes() {
+        assert_eq!(parse_size("4").unwrap(), 4 * GIB);
+        assert_eq!(parse_size("3584MiB").unwrap(), 3584 * 1024 * 1024);
+        assert_eq!(parse_size("3147788KiB").unwrap(), 3147788 * 1024);
+        assert!(parse_size("3KiB").is_err());
     }
 }

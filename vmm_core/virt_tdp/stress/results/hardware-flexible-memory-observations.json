@@ -1,0 +1,33 @@
+{
+  "date": "2026-08-16",
+  "hardware": "Intel TDX TD Partitioning L1",
+  "requested_memory_kib": 3147788,
+  "backing_policy": {
+    "huge_1g_count": 3,
+    "huge_2m_count": 1,
+    "base_page_tail_kib": 12
+  },
+  "coalesced_physical_extents": [
+    {
+      "gpa": "0x102c00000",
+      "size": "0x200000"
+    },
+    {
+      "gpa": "0x1088c2000",
+      "size": "0x2000"
+    },
+    {
+      "gpa": "0x1adbfb000",
+      "size": "0x1000"
+    },
+    {
+      "gpa": "0x380000000",
+      "size": "0xc0000000"
+    }
+  ],
+  "guest_e820_contains_every_extent": true,
+  "ubuntu_docker_cases_passed": 12,
+  "ubuntu_docker_cases_failed": 0,
+  "clean_openvmm_stop": true,
+  "vhdx_clean_after_stop": true
+}

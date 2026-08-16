@@ -18,18 +18,32 @@ impl vm_resource::ResolveResource<HypervisorKind, TdpHandle> for TdpResolver {
     type Error = virt_tdp::TdpError;
 
     fn resolve(&self, resource: TdpHandle, _input: ()) -> Result<Self::Output, Self::Error> {
-        let mut backend = virt_tdp::Tdp::new()?;
         // The memory was reserved before this process existed, because the
         // memory layout was built from the address it landed at. Mapping the
         // same descriptor here gives the same physical pages.
+        let segments = resource
+            .memory_ranges
+            .into_iter()
+            .map(|(gpa, len)| virt_tdp::hugemem::MemorySegment {
+                gpa,
+                len: len as usize,
+            })
+            .collect::<Vec<_>>();
         let region = match resource.memory {
-            Some(fd) => virt_tdp::HugeRegion::from_file(
-                fd.into(),
-                resource.memory_size as usize,
-                backend.device(),
-            )?,
+            Some(fd) => {
+                let device = Arc::new(
+                    virt_tdp::TdcallDevice::from_file(fd.into())
+                        .map_err(virt_tdp::TdpError::NoDevice)?,
+                );
+                virt_tdp::HugeRegion::from_registered(
+                    device,
+                    resource.memory_size as usize,
+                    segments,
+                )?
+            }
             None => virt_tdp::HugeRegion::alloc(resource.memory_size as usize)?,
         };
+        let mut backend = virt_tdp::Tdp::from_device(region.device().clone())?;
         backend.set_memory(Arc::new(virt_tdp::TdpMemory::new(region)));
         Ok(ResolvedHypervisorBackend::new(backend))
     }

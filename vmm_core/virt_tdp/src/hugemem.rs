@@ -1,26 +1,65 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Large, physically contiguous guest memory for an L2.
+//! Segmented private memory for an L2.
 //!
-//! TD partitioning aliases the L1's GPA directly into the L2, so guest RAM
-//! must be physically contiguous. Memory comes from the L1's reserved 1 GiB
-//! hugetlb pool. The TDCALL driver pins every page, verifies contiguity, and
-//! reports the GPA; `/proc/self/pagemap` is not part of the trusted path.
+//! TD Partitioning aliases the L1's GPA directly into the L2. The allocator
+//! therefore preserves the GPA of every backing extent instead of pretending
+//! fragmented pages form one physical range. It uses 1 GiB hugetlb pages for
+//! the main body, 2 MiB hugetlb pages for the remainder, and ordinary 4 KiB
+//! pages only for the final sub-2-MiB tail.
 
+use crate::TdcallDevice;
 use anyhow::Context;
 use anyhow::Result;
 use std::fs::File;
 use std::os::fd::{AsRawFd, FromRawFd};
+use std::sync::Arc;
 
 pub const HUGE_1G: usize = 1024 * 1024 * 1024;
+pub const HUGE_2M: usize = 2 * 1024 * 1024;
+pub const PAGE_4K: usize = 4096;
+const MAX_GUEST_RAM_SEGMENTS: usize = 96;
 
-/// A driver-validated, 1 GiB-aligned physically contiguous region.
+fn allocation_counts(size: usize) -> (usize, usize, usize) {
+    let one_gib = size / HUGE_1G;
+    let after_1g = size % HUGE_1G;
+    let two_mib = after_1g / HUGE_2M;
+    let base_pages = (after_1g % HUGE_2M) / PAGE_4K;
+    (one_gib, two_mib, base_pages)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemorySegment {
+    pub gpa: u64,
+    pub len: usize,
+}
+
+struct SourceMapping {
+    ptr: *mut u8,
+    len: usize,
+    _file: File,
+}
+
+impl Drop for SourceMapping {
+    fn drop(&mut self) {
+        // SAFETY: this type owns the complete mapping.
+        unsafe { libc::munmap(self.ptr.cast(), self.len) };
+    }
+}
+
+struct Candidate {
+    gpa: u64,
+    ptr: Option<*mut u8>,
+    len: usize,
+}
+
+/// Driver-backed linear mapping plus the physical extents it represents.
 pub struct HugeRegion {
     ptr: *mut u8,
     len: usize,
-    gpa: u64,
-    file: File,
+    segments: Vec<MemorySegment>,
+    device: Arc<TdcallDevice>,
 }
 
 // The mapping is owned exclusively by this struct, and mutation needs &mut.
@@ -29,95 +68,186 @@ unsafe impl Send for HugeRegion {}
 unsafe impl Sync for HugeRegion {}
 
 impl HugeRegion {
-    /// Reserve `size` bytes from the 1 GiB hugepage pool.
     pub fn alloc(size: usize) -> Result<Self> {
-        anyhow::ensure!(size % HUGE_1G == 0, "{size:#x} is not a multiple of 1 GiB");
-        // SAFETY: memfd_create receives a valid NUL-terminated name.
-        let fd = unsafe {
-            libc::syscall(
-                libc::SYS_memfd_create,
-                c"tdp-guest-memory".as_ptr(),
-                libc::MFD_CLOEXEC | libc::MFD_HUGETLB | libc::MFD_HUGE_1GB,
-            )
-        };
         anyhow::ensure!(
-            fd >= 0,
-            "reserving {} GiB of 1 GiB hugepages failed: {}. Boot the L1 with \
-             `default_hugepagesz=1G hugepagesz=1G hugepages=N`.",
-            size / HUGE_1G,
-            std::io::Error::last_os_error()
+            size != 0 && size % PAGE_4K == 0,
+            "L2 memory size must be 4 KiB aligned"
         );
-        // SAFETY: this function owns the returned descriptor.
-        let file = unsafe { File::from_raw_fd(fd as i32) };
-        file.set_len(size as u64)
-            .context("sizing the hugepage region")?;
-        let mut ptr = Self::map_populate(&file, size)?;
-        let device = crate::TdcallDevice::open()?;
+        let device = Arc::new(TdcallDevice::open()?);
+        let mut sources = Vec::new();
+        let mut candidates = Vec::new();
 
-        // Hugetlbfs assigns reserved hugepages in free-list order, not GPA
-        // order. Ask the driver for each hugepage's GPA and punch them back
-        // out in descending order until file offsets are physically ordered.
-        for attempt in 0..4 {
-            let mut gpas = Vec::with_capacity(size / HUGE_1G);
-            for i in 0..size / HUGE_1G {
-                // SAFETY: i is within the mapping and each address is aligned.
-                let address = unsafe { ptr.add(i * HUGE_1G) };
-                gpas.push(device.query_huge_1g(address, HUGE_1G)?);
+        let (one_gib, two_mib, base_pages) = allocation_counts(size);
+        if one_gib != 0 {
+            let source = Self::map_hugetlb(one_gib * HUGE_1G, libc::MFD_HUGE_1GB)?;
+            for index in 0..one_gib {
+                // SAFETY: every candidate lies within `source`.
+                let ptr = unsafe { source.ptr.add(index * HUGE_1G) };
+                candidates.push(Candidate {
+                    gpa: device.query_huge_1g(ptr, HUGE_1G)?,
+                    ptr: Some(ptr),
+                    len: HUGE_1G,
+                });
             }
-            let mut sorted = gpas.clone();
-            sorted.sort_unstable();
-            anyhow::ensure!(
-                sorted.windows(2).all(|w| w[1] == w[0] + HUGE_1G as u64),
-                "the reserved hugepage pool is not physically contiguous: {sorted:x?}"
-            );
-            if gpas == sorted {
-                break;
-            }
-            anyhow::ensure!(attempt < 3, "could not order hugepages by GPA: {gpas:x?}");
-            // SAFETY: unmapping the mapping owned here; it is recreated below.
-            unsafe { libc::munmap(ptr.cast(), size) };
-            let mut order: Vec<usize> = (0..gpas.len()).collect();
-            order.sort_unstable_by_key(|&i| std::cmp::Reverse(gpas[i]));
-            for i in order {
-                // SAFETY: punching a complete hugepage from our private file.
-                let rc = unsafe {
-                    libc::fallocate(
-                        file.as_raw_fd(),
-                        libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE,
-                        (i * HUGE_1G) as i64,
-                        HUGE_1G as i64,
-                    )
-                };
-                anyhow::ensure!(
-                    rc == 0,
-                    "returning hugepage {i} failed: {}",
-                    std::io::Error::last_os_error()
-                );
-            }
-            ptr = Self::map_populate(&file, size)?;
+            sources.push(source);
         }
 
-        // A TD Partitioning VM slot can be reused after either an orderly
-        // shutdown or a killed VMM. Do not depend on hugetlbfs allocation
-        // policy to sanitize pages returned by the previous L2: clear the
-        // complete region before the driver can publish any alias to it.
-        // SAFETY: `ptr` owns a writable mapping of exactly `size` bytes.
-        unsafe { std::ptr::write_bytes(ptr, 0, size) };
+        if two_mib != 0 {
+            let source = Self::map_hugetlb(two_mib * HUGE_2M, libc::MFD_HUGE_2MB)?;
+            for index in 0..two_mib {
+                // SAFETY: every candidate lies within `source`.
+                let ptr = unsafe { source.ptr.add(index * HUGE_2M) };
+                candidates.push(Candidate {
+                    gpa: device.query_huge_2m(ptr, HUGE_2M)?,
+                    ptr: Some(ptr),
+                    len: HUGE_2M,
+                });
+            }
+            sources.push(source);
+        }
 
-        // This registration is the authoritative GPA lookup. The
-        // memfd retains the hugepages after the descriptor closes; the worker
-        // registers and pins the same file again before it may create aliases.
-        let gpa = device.register_memory(ptr, size)?;
+        let tail = base_pages * PAGE_4K;
+        if tail != 0 {
+            let mut remaining = tail;
+            while remaining != 0 {
+                let len = 1_usize << (usize::BITS - 1 - remaining.leading_zeros());
+                let allocation = device.alloc_unmapped(len, 0)?;
+                candidates.push(Candidate {
+                    gpa: allocation.gpa,
+                    ptr: None,
+                    len: allocation.len,
+                });
+                remaining -= len;
+            }
+        }
+
+        candidates.sort_unstable_by_key(|candidate| candidate.gpa);
+        for pair in candidates.windows(2) {
+            let first_end = pair[0]
+                .gpa
+                .checked_add(pair[0].len as u64)
+                .context("L2 backing GPA overflow")?;
+            anyhow::ensure!(
+                first_end <= pair[1].gpa,
+                "overlapping L2 backing at {:#x} and {:#x}",
+                pair[0].gpa,
+                pair[1].gpa
+            );
+        }
+
+        // Registration order is also the file-offset order exported by the
+        // driver. Keeping it GPA-sorted lets one linear mappable back a sorted
+        // list of sparse guest RAM ranges.
+        for candidate in &candidates {
+            if let Some(ptr) = candidate.ptr {
+                let actual = device.register_memory(ptr, candidate.len)?;
+                anyhow::ensure!(
+                    actual == candidate.gpa,
+                    "L2 backing GPA changed during registration"
+                );
+            }
+        }
+        device.finalize_memory()?;
+
+        let mut segments: Vec<MemorySegment> = Vec::new();
+        for candidate in &candidates {
+            if let Some(last) = segments.last_mut()
+                && last.gpa + last.len as u64 == candidate.gpa
+            {
+                last.len += candidate.len;
+            } else {
+                segments.push(MemorySegment {
+                    gpa: candidate.gpa,
+                    len: candidate.len,
+                });
+            }
+        }
+
+        anyhow::ensure!(
+            segments.len() <= MAX_GUEST_RAM_SEGMENTS,
+            "L2 backing produced {} physical extents; at most {} fit safely in the x86 boot memory map. Reserve 2 MiB hugepages at L1 boot so they are physically clustered",
+            segments.len(),
+            MAX_GUEST_RAM_SEGMENTS
+        );
+        tracing::info!(size, ?segments, "allocated segmented L2 memory");
+
+        let ptr = Self::map_driver(&device, size)?;
+        // The driver pins the source mappings before they are dropped. Clear
+        // through the canonical composite mapping so reused L2 pages cannot
+        // retain tenant data.
+        unsafe { std::ptr::write_bytes(ptr, 0, size) };
+        drop(sources);
+
         Ok(Self {
             ptr,
             len: size,
-            gpa,
-            file,
+            segments,
+            device,
         })
     }
 
-    fn map_populate(file: &File, size: usize) -> Result<*mut u8> {
-        // SAFETY: mapping a file owned by the caller.
+    pub fn from_registered(
+        device: Arc<TdcallDevice>,
+        size: usize,
+        segments: Vec<MemorySegment>,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            size != 0 && size % PAGE_4K == 0,
+            "L2 memory size must be 4 KiB aligned"
+        );
+        anyhow::ensure!(
+            !segments.is_empty()
+                && segments.iter().all(|segment| {
+                    segment.gpa % PAGE_4K as u64 == 0
+                        && segment.len != 0
+                        && segment.len % PAGE_4K == 0
+                        && segment.gpa.checked_add(segment.len as u64).is_some()
+                })
+                && segments
+                    .windows(2)
+                    .all(|pair| { pair[0].gpa + pair[0].len as u64 <= pair[1].gpa }),
+            "invalid L2 segment metadata"
+        );
+        anyhow::ensure!(
+            segments
+                .iter()
+                .try_fold(0_usize, |total, segment| total.checked_add(segment.len))
+                == Some(size),
+            "L2 segment lengths do not match the requested memory size"
+        );
+        anyhow::ensure!(
+            segments.len() <= MAX_GUEST_RAM_SEGMENTS,
+            "too many L2 RAM segments"
+        );
+        let ptr = Self::map_driver(&device, size)?;
+        Ok(Self {
+            ptr,
+            len: size,
+            segments,
+            device,
+        })
+    }
+
+    fn create_memfd(name: &'static std::ffi::CStr, flags: libc::c_uint) -> Result<File> {
+        // SAFETY: `name` is NUL terminated and flags are defined by Linux.
+        let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) };
+        anyhow::ensure!(
+            fd >= 0,
+            "creating L2 backing failed: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: this function owns the returned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd as i32) })
+    }
+
+    fn map_hugetlb(size: usize, page_flag: libc::c_uint) -> Result<SourceMapping> {
+        let file = Self::create_memfd(
+            c"tdp-guest-hugetlb",
+            libc::MFD_CLOEXEC | libc::MFD_HUGETLB | page_flag,
+        )?;
+        file.set_len(size as u64)
+            .context("sizing hugetlb L2 backing")?;
+        // SAFETY: mapping the complete private hugetlb file.
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -130,34 +260,49 @@ impl HugeRegion {
         };
         anyhow::ensure!(
             ptr != libc::MAP_FAILED,
-            "mapping {} GiB of L2 memory failed: {}",
-            size / HUGE_1G,
+            "mapping hugetlb L2 backing failed: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(SourceMapping {
+            ptr: ptr.cast(),
+            len: size,
+            _file: file,
+        })
+    }
+
+    fn map_driver(device: &TdcallDevice, size: usize) -> Result<*mut u8> {
+        // SAFETY: the driver exposes the registered segments consecutively at
+        // file offset zero.
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                device.as_raw_fd(),
+                0,
+            )
+        };
+        anyhow::ensure!(
+            ptr != libc::MAP_FAILED,
+            "mapping segmented L2 memory failed: {}",
             std::io::Error::last_os_error()
         );
         Ok(ptr.cast())
     }
 
-    /// Map and register a region passed into the VMM worker.
-    pub fn from_file(file: File, size: usize, device: &crate::TdcallDevice) -> Result<Self> {
-        let ptr = Self::map_populate(&file, size)?;
-        let gpa = device.register_memory(ptr, size)?;
-        Ok(Self {
-            ptr,
-            len: size,
-            gpa,
-            file,
-        })
+    pub fn segments(&self) -> &[MemorySegment] {
+        &self.segments
     }
 
-    pub fn gpa(&self) -> u64 {
-        self.gpa
+    pub fn device(&self) -> &Arc<TdcallDevice> {
+        &self.device
     }
+
     pub fn as_ptr(&self) -> *const u8 {
         self.ptr
     }
-    pub fn file(&self) -> &File {
-        &self.file
-    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -180,11 +325,24 @@ impl HugeRegion {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocation_uses_small_pages_only_for_the_tail() {
+        assert_eq!(allocation_counts(4 * HUGE_1G), (4, 0, 0));
+        assert_eq!(allocation_counts(3 * HUGE_1G + HUGE_1G / 2), (3, 256, 0));
+        assert_eq!(
+            allocation_counts(HUGE_1G + HUGE_2M + 3 * PAGE_4K),
+            (1, 1, 3)
+        );
+    }
+}
+
 impl Drop for HugeRegion {
     fn drop(&mut self) {
         // SAFETY: unmapping the mapping owned by this struct.
-        unsafe {
-            libc::munmap(self.ptr.cast(), self.len);
-        }
+        unsafe { libc::munmap(self.ptr.cast(), self.len) };
     }
 }

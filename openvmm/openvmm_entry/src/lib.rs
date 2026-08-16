@@ -1932,19 +1932,28 @@ async fn vm_config_from_command_line(
         .as_deref()
         .is_some_and(|spec| spec.split(':').next() == Some("tdp"))
     {
-        let (base, file) = virt_tdp::reserve_guest_memory(opt.memory_size() as usize)
+        let (ranges, file) = virt_tdp::reserve_guest_memory(opt.memory_size() as usize)
             .context("reserving the L2's memory")?;
-        Some((base, file))
+        Some((ranges, file))
     } else {
         None
     };
     #[cfg(not(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64")))]
-    let tdp_memory: Option<(u64, std::fs::File)> = None;
+    let tdp_memory: Option<(Vec<std::ops::Range<u64>>, std::fs::File)> = None;
 
     let mut cfg = Config {
         // Set by the backend when it does not choose its own guest
         // physical addresses; see Config::ram_start_address.
-        ram_start_address: tdp_memory.as_ref().map(|(base, _)| *base),
+        ram_start_address: tdp_memory
+            .as_ref()
+            .and_then(|(ranges, _)| ranges.first().map(|range| range.start)),
+        fixed_ram_ranges: tdp_memory.as_ref().map_or_else(Vec::new, |(ranges, _)| {
+            ranges
+                .iter()
+                .cloned()
+                .map(memory_range::MemoryRange::new)
+                .collect()
+        }),
         chipset,
         load_mode,
         floppy_disks,
@@ -2774,8 +2783,8 @@ async fn run_control_inner(
                 Some(memory) => Some(openvmm_helpers::shared_memory::file_to_shared_memory_fd(
                     memory
                         .region()
-                        .file()
-                        .try_clone()
+                        .device()
+                        .try_clone_file()
                         .context("sharing the L2's memory")?,
                 )?),
                 None => shared_memory,

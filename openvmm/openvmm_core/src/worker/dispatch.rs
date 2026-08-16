@@ -204,6 +204,7 @@ impl Manifest {
             vga_firmware: config.vga_firmware,
             vtl2_gfx: config.vtl2_gfx,
             ram_start_address: config.ram_start_address,
+            fixed_ram_ranges: config.fixed_ram_ranges,
             virtio_devices: config.virtio_devices,
             vmbus: config.vmbus,
             vtl2_vmbus: config.vtl2_vmbus,
@@ -251,6 +252,7 @@ pub struct Manifest {
     /// Lowest guest physical address for ordinary RAM, when the backend does
     /// not get to choose.
     ram_start_address: Option<u64>,
+    fixed_ram_ranges: Vec<MemoryRange>,
     virtio_devices: Vec<(VirtioBus, Resource<VirtioDeviceHandle>)>,
     vmbus: Option<VmbusConfig>,
     vtl2_vmbus: Option<VmbusConfig>,
@@ -1147,6 +1149,7 @@ impl InitializedVm {
             virtio_mmio_count,
             vtl2_layout,
             ram_start_address,
+            fixed_ram_ranges: &cfg.fixed_ram_ranges,
             vtl2_framebuffer_size,
             physical_address_size,
         })
@@ -4003,6 +4006,7 @@ impl LoadedVm {
             vga_firmware: None, // TODO
             vtl2_gfx: false,    // TODO
             ram_start_address: None,
+            fixed_ram_ranges: vec![],
             virtio_devices: vec![], // TODO
             #[cfg(all(windows, feature = "virt_whp"))]
             vpci_resources: vec![], // TODO

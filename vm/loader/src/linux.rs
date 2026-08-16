@@ -114,14 +114,15 @@ fn build_zero_page(
         ..FromZeros::new_zeroed()
     };
 
-    // Skip the emulated hole below 1 MiB; it is described on its own below,
-    // and the layout the rest of this builds is anchored on the main range.
-    let mut ram = mem_layout
+    // The boot metadata lives in the largest (main) extent, but smaller
+    // physical extents may sit on either side of it. Keep them all in e820;
+    // filtering by the main extent's base silently hid lower sparse RAM.
+    let range = mem_layout
         .ram()
         .iter()
-        .filter(|r| r.range.start() >= low_base)
-        .cloned();
-    let range = ram.next().expect("at least one ram range");
+        .find(|r| r.range.start() == low_base)
+        .cloned()
+        .expect("main ram range");
     // RAM normally starts at zero, but a guest whose physical addresses are
     // not its own to choose starts wherever its pages are; the low layout was
     // shifted to match.
@@ -199,6 +200,14 @@ fn build_zero_page(
         push(0x1000, 0x9f000, defs::E820_RAM)?;
     }
 
+    for other in mem_layout
+        .ram()
+        .iter()
+        .filter(|other| other.range.end() <= low_base && other.range.end() > ONE_MB)
+    {
+        push(other.range.start(), other.range.len(), defs::E820_RAM)?;
+    }
+
     let one_mb = low_base + ONE_MB;
     push(
         low_base,
@@ -223,8 +232,12 @@ fn build_zero_page(
         defs::E820_RESERVED,
     )?;
     push(one_mb, range.range.end() - one_mb, defs::E820_RAM)?;
-    for range in ram {
-        push(range.range.start(), range.range.len(), defs::E820_RAM)?;
+    for other in mem_layout
+        .ram()
+        .iter()
+        .filter(|other| other.range.start() >= range.range.end())
+    {
+        push(other.range.start(), other.range.len(), defs::E820_RAM)?;
     }
     p.e820_entries = n as u8;
 
@@ -1249,6 +1262,50 @@ mod tests {
             &[],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn zero_page_keeps_sparse_ram_below_main_extent() {
+        let small = MemoryRange::new(4 * GB..4 * GB + 2 * MB);
+        let main = MemoryRange::new(16 * GB..19 * GB);
+        let layout = MemoryLayout::new_from_ranges(
+            &[
+                vm_topology::memory::MemoryRangeWithNode {
+                    range: MemoryRange::new(0..MB),
+                    vnode: 0,
+                },
+                vm_topology::memory::MemoryRangeWithNode {
+                    range: small,
+                    vnode: 0,
+                },
+                vm_topology::memory::MemoryRangeWithNode {
+                    range: main,
+                    vnode: 0,
+                },
+            ],
+            &[],
+        )
+        .unwrap();
+        let p = build_zero_page(
+            main.start(),
+            &layout,
+            0,
+            0,
+            0,
+            &CString::new("console=ttyS0").unwrap(),
+            0,
+            0,
+            None,
+        )
+        .unwrap()
+        .boot_params;
+
+        assert!((0..usize::from(p.e820_entries)).any(|index| {
+            let entry = &p.e820_map[index];
+            u64::from(entry.addr) == small.start()
+                && u64::from(entry.size) == small.len()
+                && u32::from(entry.typ) == defs::E820_RAM
+        }));
     }
 
     /// Asserts that `map[..entries]` exactly covers `[0, first_ram_end)` with no

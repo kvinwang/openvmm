@@ -78,7 +78,7 @@ impl ProtoPartition for TdpProtoPartition<'_> {
     ) -> Result<(Self::Partition, Vec<Self::ProcessorBinder>), Self::Error> {
         // The layout is not this backend's to choose, but it is its business
         // to refuse one that does not match where the memory actually is.
-        let range = self.memory.gpa_range();
+        let ranges = self.memory.gpa_ranges();
         for ram in config.mem_layout.ram() {
             let start = ram.range.start();
             let end = ram.range.end();
@@ -87,10 +87,13 @@ impl ProtoPartition for TdpProtoPartition<'_> {
             if end <= crate::lowmem::LOW_MEMORY_END {
                 continue;
             }
-            if start < range.start || end > range.end {
+            if !ranges
+                .iter()
+                .any(|range| start >= range.start && end <= range.end)
+            {
                 return Err(TdpError::MemoryLayout {
                     requested: start..end,
-                    available: range,
+                    available: ranges,
                 });
             }
         }
