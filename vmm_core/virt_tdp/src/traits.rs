@@ -43,14 +43,12 @@ pub struct PendingInterrupts {
     vectors: parking_lot::Mutex<Vec<(VpIndex, u8)>>,
     vp_wakes: Vec<VpWake>,
     apics: Arc<virt_support_apic::LocalApicSet>,
+    device: Arc<crate::TdcallDevice>,
 }
 
 #[derive(Default)]
 struct VpWake {
     pending: std::sync::atomic::AtomicBool,
-    /// The thread blocked in an entry, to be signalled out of it. Zero until
-    /// the processor registers itself.
-    wake_tid: std::sync::atomic::AtomicI32,
     /// Whether that thread is inside an entry right now. The signal is only
     /// worth sending then: outside the entry the processor is about to drain
     /// the queue anyway, and a signal per device interrupt starves the entry
@@ -67,37 +65,18 @@ struct VpWake {
     halt_waker: parking_lot::Mutex<Option<std::task::Waker>>,
 }
 
-/// The signal that ends a blocked entry. It needs a handler — the default
-/// disposition either kills the process or ignores the signal entirely, and
-/// an ignored signal does not interrupt a system call.
-fn wake_signal() -> i32 {
-    libc::SIGRTMIN() + 4
-}
-
-/// Install the (empty) handler for [`wake_signal`], once per process.
-///
-/// Deliberately without `SA_RESTART`: the entire point is that the TDCALL
-/// returns `EINTR` rather than resuming.
-pub fn install_wake_handler() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        extern "C" fn on_wake(_: i32) {}
-        // SAFETY: installing a handler that does nothing, with no flags.
-        unsafe {
-            let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = on_wake as *const () as usize;
-            libc::sigaction(wake_signal(), &action, std::ptr::null_mut());
-        }
-    });
-}
-
 impl PendingInterrupts {
-    pub fn new(vp_count: u32, apics: Arc<virt_support_apic::LocalApicSet>) -> Self {
+    pub fn new(
+        vp_count: u32,
+        apics: Arc<virt_support_apic::LocalApicSet>,
+        device: Arc<crate::TdcallDevice>,
+    ) -> Self {
         Self {
             routes: parking_lot::Mutex::new([None; 24]),
             vectors: parking_lot::Mutex::new(Vec::new()),
             vp_wakes: (0..vp_count).map(|_| VpWake::default()).collect(),
             apics,
+            device,
         }
     }
 
@@ -183,21 +162,8 @@ impl PendingInterrupts {
             // Already signalled out of this entry.
             return;
         }
-        // Off by default. Signalling a thread that is inside the entry TDCALL
-        // double-faults the L1: the signal is delivered while the processor is
-        // in a state the kernel's entry code does not expect, and it takes the
-        // whole L1 down rather than just ending the entry. Without it the
-        // guest still makes progress — the host's own timer returns from the
-        // entry often enough — it is only slower.
-        if std::env::var_os("VIRT_TDP_WAKE_SIGNAL").is_none_or(|value| value == "0") {
-            return;
-        }
-        let tid = vp_wake.wake_tid.load(Ordering::Relaxed);
-        if tid != 0 {
-            // SAFETY: raising a signal with an installed no-op handler.
-            unsafe {
-                libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, wake_signal());
-            }
+        if let Err(err) = self.device.kick_vp(vp_index.index()) {
+            tracing::error!(vp = vp_index.index(), %err, "failed to kick an L2 VP");
         }
     }
 
@@ -214,25 +180,14 @@ impl PendingInterrupts {
         if !vp_wake.in_entry.load(Ordering::SeqCst) {
             return;
         }
-        let tid = vp_wake.wake_tid.load(Ordering::Relaxed);
-        if tid != 0 {
-            // SAFETY: `register_waker_thread` installed a no-op handler for
-            // this signal. The driver returns from an interruptible entry and
-            // the run loop then observes the controller's stop/yield request.
-            unsafe {
-                libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, wake_signal());
-            }
+        if let Err(err) = self.device.kick_vp(vp_index.index()) {
+            tracing::error!(vp = vp_index.index(), %err, "failed to stop an L2 VP");
         }
     }
 
     /// Register the calling thread as the one to signal out of an entry.
     pub fn register_waker_thread(&self, vp_index: VpIndex) {
-        install_wake_handler();
-        // SAFETY: gettid has no preconditions.
-        let tid = unsafe { libc::gettid() };
-        self.vp_wake(vp_index)
-            .wake_tid
-            .store(tid, std::sync::atomic::Ordering::Relaxed);
+        let _ = vp_index;
     }
 
     /// Mark the start of an entry, so an interrupt raised during it signals

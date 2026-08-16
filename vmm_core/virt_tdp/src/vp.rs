@@ -614,6 +614,13 @@ impl TdpProcessor {
 
         vm.write_vmcs(f::VIRTUAL_APIC_PAGE, Width::Bits64, apic_gpa)?;
         vm.write_vmcs(f::TPR_THRESHOLD, Width::Bits32, 0)?;
+        // TDVPS state survives closing the userspace owner and claiming the
+        // same L2 slot again. Never inherit a valid event-injection field from
+        // an earlier VM: a stale NMI can remain blocked for minutes and then
+        // appear in an unrelated workload as Linux's "unknown reason" NMI.
+        vm.write_vmcs(f::ENTRY_INTR_INFO, Width::Bits32, 0)?;
+        vm.write_vmcs(f::ENTRY_EXCEPTION_EC, Width::Bits32, 0)?;
+        vm.write_vmcs(f::ENTRY_INSTR_LEN, Width::Bits32, 0)?;
         // A guest that faults in a loop of its own making takes no exits, so
         // there is nothing to see: TDG.VP.ENTER simply does not return. Setting
         // this makes the loop visible. It is off by default because a guest
@@ -754,7 +761,7 @@ impl TdpProcessor {
             vm.write_vmcs(vmcs::field::ENTRY_INTR_INFO, Width::Bits32, 0)?;
         }
 
-        match vm.enter(context_gpa)? {
+        match vm.enter(self.vp_index.index(), context_gpa)? {
             VpEnterResult::NoEntry => Ok(Exit::Resume),
             VpEnterResult::HostRouted { reason } => {
                 if reason == exit::EXTERNAL_INTERRUPT {
@@ -1407,6 +1414,13 @@ impl TdpProcessor {
             }
         }
 
+        if work.nmi {
+            tracing::warn!(
+                vp = self.vp_index.index(),
+                ?work,
+                "injecting an APIC-requested NMI"
+            );
+        }
         self.nmi_pending |= work.nmi;
         if self.nmi_pending && !self.injection_pending {
             // Unlike fixed interrupts, an NMI is not represented in the

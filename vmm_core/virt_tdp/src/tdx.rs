@@ -402,7 +402,7 @@ impl<'a> L2Vm<'a> {
 
     /// Run the L2 until it exits. `context_gpa` is the GPR image the module
     /// loads on entry and writes back on exit.
-    pub fn enter(&self, context_gpa: u64) -> Result<VpEnterResult> {
+    pub fn enter(&self, vp_index: u32, context_gpa: u64) -> Result<VpEnterResult> {
         let mut args = TdcallArgs {
             rax: LEAF_VP_ENTER,
             rcx: u64::from(self.vm_id) << 52,
@@ -411,7 +411,7 @@ impl<'a> L2Vm<'a> {
         };
         // Interruptible, so a device raising an interrupt on another thread
         // can end an entry that would otherwise sleep through it.
-        let Some(status) = self.dev.tdcall_interruptible(&mut args)? else {
+        let Some(status) = self.dev.vp_enter(vp_index, &mut args)? else {
             return Ok(VpEnterResult::NoEntry);
         };
 

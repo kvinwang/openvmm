@@ -57,6 +57,30 @@ struct TdRegisterMemory {
     gpa: u64,
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct TdApi {
+    abi_version: u32,
+    struct_size: u32,
+    features: u64,
+    reserved: [u64; 2],
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct TdVpEnter {
+    vp_index: u32,
+    flags: u32,
+    args: TdcallArgs,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct TdVpKick {
+    vp_index: u32,
+    flags: u32,
+}
+
 /// Keep the allocation below 4 GiB. Needed only for a guest that starts
 /// outside 64-bit mode, where segment bases must fit in 32 bits.
 pub const ALLOC_BELOW_4G: u64 = 1 << 0;
@@ -81,10 +105,23 @@ const fn iow(nr: u8, size: usize) -> libc::c_ulong {
         | nr as libc::c_ulong
 }
 
+const fn ior(nr: u8, size: usize) -> libc::c_ulong {
+    (2 << 30)
+        | ((size as libc::c_ulong) << 16)
+        | ((IOC_MAGIC as libc::c_ulong) << 8)
+        | nr as libc::c_ulong
+}
+
 const IOCTL_EXEC: libc::c_ulong = iowr(1, size_of::<TdcallArgs>());
 const IOCTL_ALLOC: libc::c_ulong = iowr(2, size_of::<TdAlloc>());
 const IOCTL_CLAIM_VM: libc::c_ulong = iow(3, size_of::<TdVmClaim>());
 const IOCTL_REGISTER_MEMORY: libc::c_ulong = iowr(4, size_of::<TdRegisterMemory>());
+const IOCTL_GET_API: libc::c_ulong = ior(5, size_of::<TdApi>());
+const IOCTL_VP_ENTER: libc::c_ulong = iowr(6, size_of::<TdVpEnter>());
+const IOCTL_KICK_VP: libc::c_ulong = iow(7, size_of::<TdVpKick>());
+const ABI_VERSION: u32 = 1;
+const FEATURE_VP_ENTER: u64 = 1 << 0;
+const FEATURE_VP_KICK: u64 = 1 << 1;
 const REGISTER_QUERY_HUGE_1G: u64 = 1 << 0;
 
 /// Private memory shared between this process and an L2.
@@ -156,7 +193,38 @@ impl TdcallDevice {
             .write(true)
             .open("/dev/dstack_tdcall")
             .context("opening /dev/dstack_tdcall; is the dstack_tdcall module loaded?")?;
-        Ok(Self { file })
+        let device = Self { file };
+        device.check_api()?;
+        Ok(device)
+    }
+
+    fn check_api(&self) -> Result<()> {
+        let mut api = TdApi::default();
+        // SAFETY: the ioctl writes exactly one TdApi.
+        let rc = unsafe {
+            libc::ioctl(
+                self.file.as_raw_fd(),
+                IOCTL_GET_API,
+                std::ptr::from_mut(&mut api),
+            )
+        };
+        anyhow::ensure!(
+            rc == 0,
+            "querying dstack_tdcall API failed: {}",
+            std::io::Error::last_os_error()
+        );
+        anyhow::ensure!(
+            api.abi_version == ABI_VERSION && api.struct_size as usize >= size_of::<TdApi>(),
+            "unsupported dstack_tdcall ABI {} (expected {ABI_VERSION})",
+            api.abi_version
+        );
+        let required = FEATURE_VP_ENTER | FEATURE_VP_KICK;
+        anyhow::ensure!(
+            api.features & required == required,
+            "dstack_tdcall lacks required VP enter/kick capabilities ({:#x})",
+            api.features
+        );
+        Ok(())
     }
 
     /// Exclusively claim an L2 VM slot for this descriptor.
@@ -210,10 +278,20 @@ impl TdcallDevice {
     /// the next one. Returns `None` when a signal got there first — the
     /// caller goes back around its loop, picks the interrupt up, and enters
     /// again.
-    pub fn tdcall_interruptible(&self, args: &mut TdcallArgs) -> Result<Option<u64>> {
-        // SAFETY: the ioctl reads and writes exactly one TdcallArgs.
-        let rc =
-            unsafe { libc::ioctl(self.file.as_raw_fd(), IOCTL_EXEC, std::ptr::from_mut(args)) };
+    pub fn vp_enter(&self, vp_index: u32, args: &mut TdcallArgs) -> Result<Option<u64>> {
+        let mut enter = TdVpEnter {
+            vp_index,
+            args: *args,
+            ..Default::default()
+        };
+        // SAFETY: the ioctl reads and writes exactly one TdVpEnter.
+        let rc = unsafe {
+            libc::ioctl(
+                self.file.as_raw_fd(),
+                IOCTL_VP_ENTER,
+                std::ptr::from_mut(&mut enter),
+            )
+        };
         if rc != 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
@@ -221,7 +299,30 @@ impl TdcallDevice {
             }
             anyhow::bail!("TDCALL ioctl for leaf {} failed: {err}", args.rax);
         }
+        *args = enter.args;
         Ok(Some(args.rax))
+    }
+
+    /// Safely force a concurrent VP entry to return through a kernel IPI.
+    pub fn kick_vp(&self, vp_index: u32) -> Result<()> {
+        let mut kick = TdVpKick {
+            vp_index,
+            ..Default::default()
+        };
+        // SAFETY: the ioctl reads exactly one TdVpKick.
+        let rc = unsafe {
+            libc::ioctl(
+                self.file.as_raw_fd(),
+                IOCTL_KICK_VP,
+                std::ptr::from_mut(&mut kick),
+            )
+        };
+        anyhow::ensure!(
+            rc == 0,
+            "kicking L2 VP {vp_index} failed: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(())
     }
 
     /// Allocate physically contiguous private memory and map it.

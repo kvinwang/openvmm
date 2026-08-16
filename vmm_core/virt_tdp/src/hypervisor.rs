@@ -116,6 +116,7 @@ impl ProtoPartition for TdpProtoPartition<'_> {
         let interrupts = Arc::new(PendingInterrupts::new(
             self.config.processor_topology.vp_count(),
             apics.clone(),
+            self.tdp.device().clone(),
         ));
 
         let low_memory = Arc::new(crate::partition::TdpLowMemory::new(self.tdp.device())?);
