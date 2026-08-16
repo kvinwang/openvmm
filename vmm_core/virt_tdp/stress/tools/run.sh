@@ -45,7 +45,7 @@ read -r -a tmux_cmd <<<"${TDP_TMUX:-tmux}"
 session="virt-tdp-stress-$$"; active=1
 cleanup() { ((active == 0)) || "${tmux_cmd[@]}" kill-session -t "$session" 2>/dev/null || true; }
 trap cleanup EXIT
-argv=(env VIRT_TDP_WAKE_SIGNAL=0 "$openvmm" --hypervisor "tdp:memory=$memory_gib"
+argv=("$openvmm" --hypervisor "tdp:memory=$memory_gib"
     -m "${memory_gib}G" -p "$processors" -k "$kernel"
     -c "root=/dev/vda1 rootwait rw console=ttyS0 earlyprintk=serial,ttyS0,115200 nokaslr fstab=no systemd.unified_cgroup_hierarchy=1 virt_tdp_stress_seconds=$duration"
     --com1 "file=$serial" --virtio-blk-mmio "file:$disk"

@@ -2,12 +2,25 @@
   "date": "2026-08-16",
   "hardware": "Intel TDX TD Partitioning L1",
   "known_host_limitations": [
-    "Only four 1 GiB hugepages were available, limiting the L2 to 4 GiB",
-    "OpenVMM left a VHDX log requiring qemu-img check -r all before disk reuse even after a clean process stop"
+    "Only four 1 GiB hugepages were available, limiting the L2 to 4 GiB"
   ],
   "l2_memory_gib": 4,
   "module_branch": "dstack/restricted-tdp-uapi",
-  "module_commit": "4323313",
+  "module_commit": "1907d5b",
+  "openvmm_branch": "dstack/openvmm-tdp-clean",
+  "openvmm_commit": "8f40200",
+  "validation": {
+    "disk_format": "VHDX",
+    "disk_clean_after_each_final_run": true,
+    "guest_unknown_nmi_warnings": 0,
+    "unexpected_external_nmis_contained_in_l1": 3,
+    "notes": [
+      "Writable VHDX journal replay and clean-close were validated on hardware.",
+      "One external NMI was contained during the 4-vCPU run and two during the 8-vCPU run; none reached the guest.",
+      "Process-churn throughput is scheduling-sensitive and is not used as the SMP scaling gate.",
+      "The dedicated parallel CPU workload increased from 749982561 to 1692087427 iterations per second from 4 to 8 vCPUs."
+    ]
+  },
   "runs": [
     {
       "cases_failed": 0,
@@ -17,16 +30,16 @@
       "guest_kernel_warnings": [],
       "processors": 4,
       "selected_metrics": {
-        "cpu_iterations_per_second": 928444351,
-        "filesystem_write_mb_per_second": 172.3,
-        "memory_mib_per_second": 21275.2,
-        "mixed_duration_ms": 60880,
-        "mixed_postgres_tps": 347.940497,
-        "network_mib_per_second": 8.7,
-        "network_packets_per_second": 6065.9,
+        "cpu_iterations_per_second": 749982561,
+        "filesystem_write_mb_per_second": 188.4,
+        "memory_mib_per_second": 19089.5,
+        "mixed_duration_ms": 97166,
+        "mixed_postgres_tps": 368.675573,
+        "network_mib_per_second": 8.6,
+        "network_packets_per_second": 6032.5,
         "postgres_failed_transactions": 0,
-        "postgres_tps": 331.07356,
-        "processes_per_second": 2796.3
+        "postgres_tps": 274.418122,
+        "processes_per_second": 1365.3
       }
     },
     {
@@ -34,21 +47,19 @@
       "cases_passed": 12,
       "clean_openvmm_stop": true,
       "duration_seconds": 60,
-      "guest_kernel_warnings": [
-        "NMI received for unknown reason 21 on CPU 6 during the mixed workload; Linux continued and all integrity gates passed"
-      ],
+      "guest_kernel_warnings": [],
       "processors": 8,
       "selected_metrics": {
-        "cpu_iterations_per_second": 1559617243,
-        "filesystem_write_mb_per_second": 151.7,
-        "memory_mib_per_second": 20344.8,
-        "mixed_duration_ms": 104109,
-        "mixed_postgres_tps": 394.833797,
-        "network_mib_per_second": 9.3,
-        "network_packets_per_second": 6505.8,
+        "cpu_iterations_per_second": 1692087427,
+        "filesystem_write_mb_per_second": 184.9,
+        "memory_mib_per_second": 28153.6,
+        "mixed_duration_ms": 93020,
+        "mixed_postgres_tps": 455.798963,
+        "network_mib_per_second": 8.9,
+        "network_packets_per_second": 6256.3,
         "postgres_failed_transactions": 0,
-        "postgres_tps": 422.093696,
-        "processes_per_second": 623.1
+        "postgres_tps": 280.951111,
+        "processes_per_second": 1674.9
       }
     }
   ]

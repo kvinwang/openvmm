@@ -24,7 +24,14 @@ be correctly replayed by an instruction emulator. The driver must accept the
 range through `0x100000` (older revisions capped it at `0xa0000`).
 
 The hardware host used for validation has four 1 GiB hugepages, so use a 4 GiB
-L2. Always set `VIRT_TDP_WAKE_SIGNAL=0`; `tools/run.sh` enforces it.
+L2. VP wakeup uses the driver capability-negotiated kernel-IPI path; POSIX
+signals are not delivered across `TDG.VP.ENTER`.
+
+The backend does not expose architectural PMU capabilities because PMU state
+is not virtualized across L2 entry. It also traps external NMIs by default:
+NMIs explicitly requested through the APIC model receive a one-entry bypass,
+while an NMI that escapes TD Partitioning's NMI-exiting control is contained in
+L1 and logged instead of appearing in Linux as an unexplained tenant NMI.
 
 ## Build the dynamic disk
 
@@ -61,10 +68,7 @@ tmux new-session -d -s virt-tdp-ubuntu-stress \
 
 `summary.json` is the machine-readable gate. A pass requires every case marker
 and a clean OpenVMM process stop. `serial.log` and `openvmm.log` retain primary
-evidence. Current OpenVMM VHDX support does not replay a pending VHDX log, so
-after a run use the following before reusing a disk if `qemu-img check` reports
-that replay is needed:
-
-```bash
-qemu-img check -r all ubuntu-docker.vhdx
-```
+evidence. Writable VHDX opens replay a validated pending journal automatically.
+A clean OpenVMM stop drains disk I/O, closes the VHDX journal, and clears its
+log GUID; an abrupt process or host failure deliberately leaves the journal for
+replay.
