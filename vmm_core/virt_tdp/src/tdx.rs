@@ -147,18 +147,18 @@ fn build_field_id(class: u64, context: u64, write: bool, elem_size: u64, field: 
 /// this table are fully writable at their natural width.
 fn vmcs_write_mask(field: u32, width: Width) -> u64 {
     match field {
-        0x201a => 0x80,                     // EPT pointer
-        0x2012 => 0xFFFF_FFFF_FFFF_F000,    // virtual-APIC page address
-        0x2040 => 0xFFFF_FFFF_F018,         // HLAT pointer
-        0x2802 => 0xFFC1,                   // guest IA32_DEBUGCTL
-        0x2806 => 0x501,                    // guest IA32_EFER
-        0x4002 => 0x48F9_9A04,              // primary processor-based controls
-        0x4004 => 0xFFFF_FFFF_FFFB_FFFF,    // exception bitmap
-        0x4012 => 0x200,                    // VM-entry controls
-        0x401e => 0xC51_3F0C,               // secondary processor-based controls
-        0x2034 => 0xE,                      // tertiary processor-based controls
-        0x6800 => 0x8005_001F,              // guest CR0
-        0x6804 => 0x3FF_1FBF,               // guest CR4
+        0x201a => 0x80,                  // EPT pointer
+        0x2012 => 0xFFFF_FFFF_FFFF_F000, // virtual-APIC page address
+        0x2040 => 0xFFFF_FFFF_F018,      // HLAT pointer
+        0x2802 => 0xFFC1,                // guest IA32_DEBUGCTL
+        0x2806 => 0x501,                 // guest IA32_EFER
+        0x4002 => 0x48F9_9A04,           // primary processor-based controls
+        0x4004 => 0xFFFF_FFFF_FFFB_FFFF, // exception bitmap
+        0x4012 => 0x200,                 // VM-entry controls
+        0x401e => 0xC51_3F0C,            // secondary processor-based controls
+        0x2034 => 0xE,                   // tertiary processor-based controls
+        0x6800 => 0x8005_001F,           // guest CR0
+        0x6804 => 0x3FF_1FBF,            // guest CR4
         _ => width.default_mask(),
     }
 }
@@ -191,7 +191,10 @@ impl<'a> L2Vm<'a> {
             ..Default::default()
         };
         let status = dev.tdcall(&mut args)?;
-        anyhow::ensure!(status == TDX_SUCCESS, "TDG.VM.RD(NUM_L2_VMS) failed: {status:#018x}");
+        anyhow::ensure!(
+            status == TDX_SUCCESS,
+            "TDG.VM.RD(NUM_L2_VMS) failed: {status:#018x}"
+        );
         Ok(args.r8)
     }
 
@@ -209,7 +212,10 @@ impl<'a> L2Vm<'a> {
             ..Default::default()
         };
         let status = self.dev.tdcall(&mut args)?;
-        anyhow::ensure!(status == TDX_SUCCESS, "TDG.VP.RD of VMCS field {field:#06x} failed: {status:#018x}");
+        anyhow::ensure!(
+            status == TDX_SUCCESS,
+            "TDG.VP.RD of VMCS field {field:#06x} failed: {status:#018x}"
+        );
         Ok(args.r8)
     }
 
@@ -246,7 +252,10 @@ impl<'a> L2Vm<'a> {
             ..Default::default()
         };
         let status = self.dev.tdcall(&mut args)?;
-        anyhow::ensure!(status == TDX_SUCCESS, "TDG.VP.WR of {field_id:#x} failed: {status:#018x}");
+        anyhow::ensure!(
+            status == TDX_SUCCESS,
+            "TDG.VP.WR of {field_id:#x} failed: {status:#018x}"
+        );
         Ok(())
     }
 
@@ -335,7 +344,10 @@ impl<'a> L2Vm<'a> {
             ..Default::default()
         };
         let status = self.dev.tdcall(&mut args)?;
-        anyhow::ensure!(status == TDX_SUCCESS, "reading MSR bitmap word {qword} failed: {status:#018x}");
+        anyhow::ensure!(
+            status == TDX_SUCCESS,
+            "reading MSR bitmap word {qword} failed: {status:#018x}"
+        );
         Ok(args.r8)
     }
 

@@ -794,9 +794,9 @@ impl VmService {
         };
 
         let mut config = Config {
-        // Set by the backend when it does not choose its own guest
-        // physical addresses; see Config::ram_start_address.
-        ram_start_address: None,
+            // Set by the backend when it does not choose its own guest
+            // physical addresses; see Config::ram_start_address.
+            ram_start_address: None,
             // TODO: devices, other stuff
             load_mode,
             ide_disks: vec![],

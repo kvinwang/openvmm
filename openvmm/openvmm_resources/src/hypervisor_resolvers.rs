@@ -9,6 +9,6 @@
 
 pub mod hvf;
 pub mod kvm;
-pub mod tdp;
 pub mod mshv;
+pub mod tdp;
 pub mod whp;

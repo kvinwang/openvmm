@@ -10,9 +10,9 @@
 
 #![cfg(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64"))]
 
+use anyhow::Context as _;
 use hypervisor_resources::HypervisorKind;
 use hypervisor_resources::TdpHandle;
-use anyhow::Context as _;
 use vm_resource::IntoResource;
 use vm_resource::Resource;
 

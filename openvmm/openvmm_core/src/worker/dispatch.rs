@@ -1246,17 +1246,16 @@ impl InitializedVm {
             // that range's memory and cannot be moved. Ranges below it get
             // ordinary memory of their own, or the mapping would be spread
             // across both and neither would be where it belongs.
-            let (ranges, low_ranges): (Vec<_>, Vec<_>) = if existing_mappable.is_some()
-                && cfg.ram_start_address.is_some()
-            {
-                let base = cfg.ram_start_address.expect("checked");
-                ranges.into_iter().partition(|r| r.start() >= base)
-            } else {
-                (ranges, Vec::new())
-            };
+            let (ranges, low_ranges): (Vec<_>, Vec<_>) =
+                if existing_mappable.is_some() && cfg.ram_start_address.is_some() {
+                    let base = cfg.ram_start_address.expect("checked");
+                    ranges.into_iter().partition(|r| r.start() >= base)
+                } else {
+                    (ranges, Vec::new())
+                };
             if !low_ranges.is_empty() {
-                memory_builder = memory_builder
-                    .add_backing(membacking::RamBackingRequest::new(low_ranges));
+                memory_builder =
+                    memory_builder.add_backing(membacking::RamBackingRequest::new(low_ranges));
             }
 
             let mut backing = membacking::RamBackingRequest::new(ranges)
@@ -3948,9 +3947,9 @@ impl LoadedVm {
             #[cfg(windows)]
             kernel_vmnics: vec![], // TODO
             input,
-            framebuffer: None,      // TODO
-            vga_firmware: None,     // TODO
-            vtl2_gfx: false,        // TODO
+            framebuffer: None,  // TODO
+            vga_firmware: None, // TODO
+            vtl2_gfx: false,    // TODO
             ram_start_address: None,
             virtio_devices: vec![], // TODO
             #[cfg(all(windows, feature = "virt_whp"))]

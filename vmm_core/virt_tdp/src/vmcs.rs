@@ -130,7 +130,17 @@ pub struct GuestState {
     pub virtual_apic_gpa: u64,
 }
 
-fn set_segment(vm: &L2Vm<'_>, sel_f: u32, base_f: u32, limit_f: u32, ar_f: u32, sel: u64, base: u64, limit: u64, ar: u64) -> Result<()> {
+fn set_segment(
+    vm: &L2Vm<'_>,
+    sel_f: u32,
+    base_f: u32,
+    limit_f: u32,
+    ar_f: u32,
+    sel: u64,
+    base: u64,
+    limit: u64,
+    ar: u64,
+) -> Result<()> {
     vm.write_vmcs(sel_f, Width::Bits16, sel)?;
     vm.write_vmcs(base_f, Width::Bits64, base)?;
     vm.write_vmcs(limit_f, Width::Bits32, limit)?;
@@ -154,7 +164,11 @@ pub fn configure_64bit(vm: &L2Vm<'_>, state: &GuestState) -> Result<()> {
     // Intercepting every exception is a diagnostic, not a design: an
     // exception the guest cannot handle otherwise loops forever with no exit
     // and no console output, which is indistinguishable from a hang.
-    let bitmap = if std::env::var_os("TDP_TRAP_EXCEPTIONS").is_some() { 0xfffb_ffff } else { 0 };
+    let bitmap = if std::env::var_os("TDP_TRAP_EXCEPTIONS").is_some() {
+        0xfffb_ffff
+    } else {
+        0
+    };
     vm.write_vmcs(f::EXCEPTION_BITMAP, Width::Bits32, bitmap)?;
     vm.write_vmcs(f::PF_EC_MASK, Width::Bits32, 0)?;
     vm.write_vmcs(f::PF_EC_MATCH, Width::Bits32, 0)?;
@@ -169,7 +183,11 @@ pub fn configure_64bit(vm: &L2Vm<'_>, state: &GuestState) -> Result<()> {
     // IA32E_MODE is the one entry control an L1 may set, and it has to agree
     // with CR0.PG and EFER.LMA or entry fails its guest-state checks.
     let entry_ctls = vm.read_vmcs(f::ENTRY_CTLS, Width::Bits32)?;
-    vm.write_vmcs(f::ENTRY_CTLS, Width::Bits32, entry_ctls | ENTRY_CTL_IA32E_MODE)?;
+    vm.write_vmcs(
+        f::ENTRY_CTLS,
+        Width::Bits32,
+        entry_ctls | ENTRY_CTL_IA32E_MODE,
+    )?;
     vm.write_vmcs(f::ENTRY_INTR_INFO, Width::Bits32, 0)?;
     vm.write_vmcs(f::ENTRY_EXCEPTION_EC, Width::Bits32, 0)?;
     vm.write_vmcs(f::ENTRY_INSTR_LEN, Width::Bits32, 0)?;
@@ -181,18 +199,83 @@ pub fn configure_64bit(vm: &L2Vm<'_>, state: &GuestState) -> Result<()> {
 
     // Flat segments. Long mode ignores most bases, but VM entry still checks
     // the access-rights bytes, so they must be architecturally sane.
-    set_segment(vm, f::GUEST_CS_SEL, f::GUEST_CS_BASE, f::GUEST_CS_LIMIT, f::GUEST_CS_AR, 0x10, 0, 0xffff_ffff, CS_AR_LONG)?;
+    set_segment(
+        vm,
+        f::GUEST_CS_SEL,
+        f::GUEST_CS_BASE,
+        f::GUEST_CS_LIMIT,
+        f::GUEST_CS_AR,
+        0x10,
+        0,
+        0xffff_ffff,
+        CS_AR_LONG,
+    )?;
     for (sel_f, base_f, limit_f, ar_f) in [
-        (f::GUEST_DS_SEL, f::GUEST_DS_BASE, f::GUEST_DS_LIMIT, f::GUEST_DS_AR),
-        (f::GUEST_ES_SEL, f::GUEST_ES_BASE, f::GUEST_ES_LIMIT, f::GUEST_ES_AR),
-        (f::GUEST_SS_SEL, f::GUEST_SS_BASE, f::GUEST_SS_LIMIT, f::GUEST_SS_AR),
-        (f::GUEST_FS_SEL, f::GUEST_FS_BASE, f::GUEST_FS_LIMIT, f::GUEST_FS_AR),
-        (f::GUEST_GS_SEL, f::GUEST_GS_BASE, f::GUEST_GS_LIMIT, f::GUEST_GS_AR),
+        (
+            f::GUEST_DS_SEL,
+            f::GUEST_DS_BASE,
+            f::GUEST_DS_LIMIT,
+            f::GUEST_DS_AR,
+        ),
+        (
+            f::GUEST_ES_SEL,
+            f::GUEST_ES_BASE,
+            f::GUEST_ES_LIMIT,
+            f::GUEST_ES_AR,
+        ),
+        (
+            f::GUEST_SS_SEL,
+            f::GUEST_SS_BASE,
+            f::GUEST_SS_LIMIT,
+            f::GUEST_SS_AR,
+        ),
+        (
+            f::GUEST_FS_SEL,
+            f::GUEST_FS_BASE,
+            f::GUEST_FS_LIMIT,
+            f::GUEST_FS_AR,
+        ),
+        (
+            f::GUEST_GS_SEL,
+            f::GUEST_GS_BASE,
+            f::GUEST_GS_LIMIT,
+            f::GUEST_GS_AR,
+        ),
     ] {
-        set_segment(vm, sel_f, base_f, limit_f, ar_f, 0x18, 0, 0xffff_ffff, DS_AR_LONG)?;
+        set_segment(
+            vm,
+            sel_f,
+            base_f,
+            limit_f,
+            ar_f,
+            0x18,
+            0,
+            0xffff_ffff,
+            DS_AR_LONG,
+        )?;
     }
-    set_segment(vm, f::GUEST_TR_SEL, f::GUEST_TR_BASE, f::GUEST_TR_LIMIT, f::GUEST_TR_AR, 0x20, 0, 0xffff, TR_AR)?;
-    set_segment(vm, f::GUEST_LDTR_SEL, f::GUEST_LDTR_BASE, f::GUEST_LDTR_LIMIT, f::GUEST_LDTR_AR, 0, 0, 0xffff, LDTR_AR_UNUSABLE)?;
+    set_segment(
+        vm,
+        f::GUEST_TR_SEL,
+        f::GUEST_TR_BASE,
+        f::GUEST_TR_LIMIT,
+        f::GUEST_TR_AR,
+        0x20,
+        0,
+        0xffff,
+        TR_AR,
+    )?;
+    set_segment(
+        vm,
+        f::GUEST_LDTR_SEL,
+        f::GUEST_LDTR_BASE,
+        f::GUEST_LDTR_LIMIT,
+        f::GUEST_LDTR_AR,
+        0,
+        0,
+        0xffff,
+        LDTR_AR_UNUSABLE,
+    )?;
 
     vm.write_vmcs(f::GUEST_GDTR_BASE, Width::Bits64, 0)?;
     vm.write_vmcs(f::GUEST_GDTR_LIMIT, Width::Bits32, 0xffff)?;
@@ -219,9 +302,5 @@ pub fn configure_64bit(vm: &L2Vm<'_>, state: &GuestState) -> Result<()> {
 /// bare metal, and every TDCALL it might make would exit to the VMM anyway.
 /// Clearing them explicitly beats inheriting whatever the module left behind.
 pub fn disable_optional_l2_features(vm: &L2Vm<'_>) -> anyhow::Result<()> {
-    vm.write_tdvps(
-        crate::tdx::MD_TDVPS_L2_CTLS + u64::from(vm.vm_id()),
-        0,
-        0x7,
-    )
+    vm.write_tdvps(crate::tdx::MD_TDVPS_L2_CTLS + u64::from(vm.vm_id()), 0, 0x7)
 }

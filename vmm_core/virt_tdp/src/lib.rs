@@ -42,28 +42,28 @@
 #![expect(unsafe_code)]
 
 mod cpuid;
+pub mod driver;
 mod emulate;
+pub mod hugemem;
 mod hypervisor;
 pub(crate) mod lowmem;
-pub mod driver;
 mod partition;
+pub mod tdx;
 mod traits;
 mod vm_state;
-mod vp_state;
-mod vp;
-pub mod hugemem;
-pub mod tdx;
 pub mod vmcs;
+mod vp;
+mod vp_state;
 
 pub use driver::TdcallDevice;
+pub use hugemem::HugeRegion;
 pub use partition::Tdp;
 pub use partition::TdpError;
 pub use partition::TdpMemory;
+pub use partition::TdpPartition;
 pub use partition::reserve_guest_memory;
 pub use partition::reserved_guest_memory;
-pub use partition::TdpPartition;
-pub use vp::TdpProcessor;
-pub use hugemem::HugeRegion;
 pub use tdx::L2GprContext;
 pub use tdx::L2Vm;
 pub use tdx::VpEnterResult;
+pub use vp::TdpProcessor;

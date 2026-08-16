@@ -344,7 +344,6 @@ impl TdpPartitionInner {
     pub(crate) fn vmtime_access(&self) -> vmcore::vmtime::VmTimeAccess {
         self.vmtime.access("l2-apic")
     }
-
 }
 
 impl Drop for TdpPartitionInner {

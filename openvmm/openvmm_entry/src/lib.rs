@@ -1739,8 +1739,7 @@ async fn vm_config_from_command_line(
             anyhow::bail!("virtio-blk-mmio supports only plain VTL0 disks");
         }
         let disk = disk_open(kind, read_only).await?;
-        let resource =
-            virtio_resources::blk::VirtioBlkHandle { disk, read_only }.into_resource();
+        let resource = virtio_resources::blk::VirtioBlkHandle { disk, read_only }.into_resource();
         add_virtio_device(VirtioBusCli::Mmio, resource);
     }
 
