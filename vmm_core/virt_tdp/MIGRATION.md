@@ -211,6 +211,9 @@ processes and emit a versioned `VIRT_TDP_CTS` serial protocol. The host runner
 rejects incomplete or inconsistent result sets, requires repeated clean
 OpenVMM shutdowns, and writes per-boot and aggregate JSON. See
 `conformance/README.md` for the coverage matrix and reproduction commands.
+The same harness includes explicit in-place-reset and guest-initiated-reboot
+tests; both report the current reset limitation as a machine-readable failure
+instead of treating a fresh OpenVMM process as a successful reset.
 
 ## Product integration boundary
 

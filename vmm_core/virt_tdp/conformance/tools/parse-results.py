@@ -62,6 +62,14 @@ def parse(serial: Path, manifest: Path) -> dict:
     extra = [case for case in cases if case not in expected]
     if missing or extra:
         raise ValueError(f"case set mismatch: missing={missing}, extra={extra}")
+    for case_id, data in cases.items():
+        required = {"id", "status", "duration_ms", "reason"}
+        if set(data) != required:
+            raise ValueError(f"case {case_id} has malformed fields")
+        if data["status"] not in {"PASS", "FAIL", "SKIP"}:
+            raise ValueError(f"case {case_id} has invalid status")
+        if not data["duration_ms"].isdigit():
+            raise ValueError(f"case {case_id} has invalid duration")
     counts = {
         status: sum(case.get("status") == status for case in cases.values())
         for status in ("PASS", "FAIL", "SKIP")
@@ -71,6 +79,8 @@ def parse(serial: Path, manifest: Path) -> dict:
     for status, count in counts.items():
         if int(end.get(status.lower(), -1)) != count:
             raise ValueError(f"END {status.lower()} count does not match records")
+    if sum(counts.values()) != len(expected):
+        raise ValueError("result status counts do not cover the manifest")
     return {
         "schema_version": 1,
         "begin": begin,

@@ -1,14 +1,128 @@
-# id	timeout_seconds	minimum_cpus	requires	description
-cpu.enumeration	10	1	none	Linux enumerates the configured processor count
-cpu.affinity	10	1	none	Every configured processor accepts an affinity-bound task
-smp.cross_cpu_fifo	30	2	none	CPU0 exchanges 256 ordered wakeups with every AP
-apic.reschedule_ipi	30	2	none	Every AP receives a reschedule IPI during cross-CPU wakeup
-apic.nmi_shorthand	15	2	none	All-excluding-self shorthand delivers an NMI to every AP
-apic.init_sipi_hotplug	20	2	none	CPU1 completes an offline and online INIT/SIPI cycle
-time.monotonic	10	1	none	Monotonic time and timer wakeups advance while the guest sleeps
-memory.anonymous_zero	30	1	none	Fresh anonymous pages are zero and copy-on-write is isolated
-cpu.fpu_smp	45	2	none	Affinity-bound SIMD workloads retain deterministic FPU state
-block.enumeration	10	1	block	The virtio block device is enumerated
-block.interrupt_io	45	1	block	Repeated block write/read completions preserve data
-network.enumeration	15	1	network	The virtio network link can be enabled
-network.tx_completion	20	1	network	Raw Ethernet transmit descriptors complete repeatedly
+# id	timeout_seconds	minimum_cpus	requires	runner	description
+cpu.enumeration	10	1	none	cpu.enumeration	Linux enumerates the configured processor count
+cpu.affinity	10	1	none	cpu.affinity	Every configured processor accepts an affinity-bound task
+smp.cross_cpu_fifo	30	2	none	smp.cross_cpu_fifo	CPU0 exchanges 256 ordered wakeups with every AP
+apic.reschedule_ipi	30	2	none	apic.reschedule_ipi	Every AP receives a reschedule IPI during cross-CPU wakeup
+apic.nmi_shorthand	15	2	none	apic.nmi_shorthand	All-excluding-self shorthand delivers an NMI to every AP
+apic.init_sipi_hotplug	20	2	none	apic.init_sipi_hotplug	CPU1 completes an offline and online INIT/SIPI cycle
+time.monotonic	10	1	none	time.monotonic	Monotonic time and timer wakeups advance while the guest sleeps
+memory.anonymous_zero	30	1	none	memory.anonymous_zero	Fresh anonymous pages are zero and copy-on-write is isolated
+cpu.fpu_smp	45	2	none	cpu.fpu_smp	Affinity-bound SIMD workloads retain deterministic FPU state
+block.enumeration	10	1	block	block.enumeration	The virtio block device is enumerated
+block.interrupt_io	45	1	block	block.interrupt_io	Repeated block write/read completions preserve data
+network.enumeration	15	1	network	network.enumeration	The virtio network link can be enabled
+network.tx_completion	20	1	network	network.tx_completion	Raw Ethernet transmit descriptors complete repeatedly
+cpu.cpuid.basic	5	1	none	semantic	CPUID leaf zero reports at least the basic feature leaf
+cpu.cpuid.vendor	5	1	none	semantic	CPUID reports a recognized x86 processor vendor
+cpu.cpuid.sse2	5	1	none	semantic	CPUID exposes mandatory x86-64 SSE2 state
+cpu.cpuid.xsave	5	1	none	semantic	CPUID exposes XSAVE state management
+cpu.cpuid.hypervisor	5	1	none	semantic	CPUID hypervisor presence is consistent with the hypervisor leaf
+cpu.cpuid.invariant_tsc	5	1	none	semantic	CPUID exposes an invariant timestamp counter
+cpu.instruction.rdtsc	5	1	none	semantic	Serialized RDTSC reads increase
+exception.invalid_opcode	5	1	none	semantic	UD2 raises SIGILL through the invalid-opcode exception
+exception.breakpoint	5	1	none	semantic	INT3 raises SIGTRAP through the breakpoint exception
+exception.divide_error	5	1	none	semantic	Integer divide by zero raises SIGFPE
+exception.page_fault_read	5	1	none	semantic	Reading a non-present mapping raises SIGSEGV
+exception.page_fault_write	5	1	none	semantic	Writing a read-only mapping raises SIGSEGV
+exception.nx	5	1	none	semantic	Executing a non-executable mapping raises SIGSEGV
+memory.zero.4k	5	1	none	semantic	A fresh 4 KiB anonymous mapping is zero-filled
+memory.zero.2m	5	1	none	semantic	A fresh 2 MiB anonymous mapping is zero-filled
+memory.zero.64m	15	1	none	semantic	A fresh 64 MiB anonymous mapping is zero-filled
+memory.cow.4k	5	1	none	semantic	Fork copy-on-write isolates a 4 KiB mapping
+memory.cow.2m	5	1	none	semantic	Fork copy-on-write isolates a 2 MiB mapping
+memory.cow.64m	20	1	none	semantic	Fork copy-on-write isolates a 64 MiB mapping
+memory.mprotect.readonly	5	1	none	semantic	A read-only mapping rejects stores
+memory.mprotect.none	5	1	none	semantic	A no-access mapping rejects loads
+memory.execute_disable	5	1	none	semantic	Anonymous writable memory is non-executable
+memory.unaligned	5	1	none	semantic	Unaligned eight-byte data retains its value
+memory.map_cycle	10	1	none	semantic	One thousand mapping and unmapping cycles complete
+smp.atomic.add.1k	10	2	none	semantic	All vCPUs preserve one thousand sequentially consistent atomic additions
+smp.atomic.add.100k	30	2	none	semantic	All vCPUs preserve one hundred thousand sequentially consistent atomic additions
+cpu.affinity.cpu0	5	1	none	topology	CPU0 accepts and runs an affinity-bound process
+cpu.online.cpu0	5	1	none	topology	CPU0 appears in the Linux online CPU set
+cpu.fpu.cpu0	15	1	none	topology	CPU0 retains deterministic SSE2 register state
+cpu.affinity.cpu1	5	2	none	topology	CPU1 accepts and runs an affinity-bound process
+cpu.online.cpu1	5	2	none	topology	CPU1 appears in the Linux online CPU set
+cpu.fpu.cpu1	15	2	none	topology	CPU1 retains deterministic SSE2 register state
+cpu.affinity.cpu2	5	3	none	topology	CPU2 accepts and runs an affinity-bound process
+cpu.online.cpu2	5	3	none	topology	CPU2 appears in the Linux online CPU set
+cpu.fpu.cpu2	15	3	none	topology	CPU2 retains deterministic SSE2 register state
+cpu.affinity.cpu3	5	4	none	topology	CPU3 accepts and runs an affinity-bound process
+cpu.online.cpu3	5	4	none	topology	CPU3 appears in the Linux online CPU set
+cpu.fpu.cpu3	15	4	none	topology	CPU3 retains deterministic SSE2 register state
+cpu.affinity.cpu4	5	5	none	topology	CPU4 accepts and runs an affinity-bound process
+cpu.online.cpu4	5	5	none	topology	CPU4 appears in the Linux online CPU set
+cpu.fpu.cpu4	15	5	none	topology	CPU4 retains deterministic SSE2 register state
+cpu.affinity.cpu5	5	6	none	topology	CPU5 accepts and runs an affinity-bound process
+cpu.online.cpu5	5	6	none	topology	CPU5 appears in the Linux online CPU set
+cpu.fpu.cpu5	15	6	none	topology	CPU5 retains deterministic SSE2 register state
+cpu.affinity.cpu6	5	7	none	topology	CPU6 accepts and runs an affinity-bound process
+cpu.online.cpu6	5	7	none	topology	CPU6 appears in the Linux online CPU set
+cpu.fpu.cpu6	15	7	none	topology	CPU6 retains deterministic SSE2 register state
+cpu.affinity.cpu7	5	8	none	topology	CPU7 accepts and runs an affinity-bound process
+cpu.online.cpu7	5	8	none	topology	CPU7 appears in the Linux online CPU set
+cpu.fpu.cpu7	15	8	none	topology	CPU7 retains deterministic SSE2 register state
+smp.fifo.cpu1	15	2	none	topology	CPU0 and CPU1 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu1	10	2	none	topology	CPU1 receives a reschedule IPI
+apic.nmi.cpu1	10	2	none	topology	CPU1 receives an all-excluding-self NMI
+apic.hotplug.cpu1	15	2	none	topology	CPU1 completes an offline and INIT-SIPI online cycle
+smp.fifo.cpu2	15	3	none	topology	CPU0 and CPU2 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu2	10	3	none	topology	CPU2 receives a reschedule IPI
+apic.nmi.cpu2	10	3	none	topology	CPU2 receives an all-excluding-self NMI
+apic.hotplug.cpu2	15	3	none	topology	CPU2 completes an offline and INIT-SIPI online cycle
+smp.fifo.cpu3	15	4	none	topology	CPU0 and CPU3 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu3	10	4	none	topology	CPU3 receives a reschedule IPI
+apic.nmi.cpu3	10	4	none	topology	CPU3 receives an all-excluding-self NMI
+apic.hotplug.cpu3	15	4	none	topology	CPU3 completes an offline and INIT-SIPI online cycle
+smp.fifo.cpu4	15	5	none	topology	CPU0 and CPU4 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu4	10	5	none	topology	CPU4 receives a reschedule IPI
+apic.nmi.cpu4	10	5	none	topology	CPU4 receives an all-excluding-self NMI
+apic.hotplug.cpu4	15	5	none	topology	CPU4 completes an offline and INIT-SIPI online cycle
+smp.fifo.cpu5	15	6	none	topology	CPU0 and CPU5 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu5	10	6	none	topology	CPU5 receives a reschedule IPI
+apic.nmi.cpu5	10	6	none	topology	CPU5 receives an all-excluding-self NMI
+apic.hotplug.cpu5	15	6	none	topology	CPU5 completes an offline and INIT-SIPI online cycle
+smp.fifo.cpu6	15	7	none	topology	CPU0 and CPU6 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu6	10	7	none	topology	CPU6 receives a reschedule IPI
+apic.nmi.cpu6	10	7	none	topology	CPU6 receives an all-excluding-self NMI
+apic.hotplug.cpu6	15	7	none	topology	CPU6 completes an offline and INIT-SIPI online cycle
+smp.fifo.cpu7	15	8	none	topology	CPU0 and CPU7 preserve 256 ordered FIFO exchanges
+apic.reschedule.cpu7	10	8	none	topology	CPU7 receives a reschedule IPI
+apic.nmi.cpu7	10	8	none	topology	CPU7 receives an all-excluding-self NMI
+apic.hotplug.cpu7	15	8	none	topology	CPU7 completes an offline and INIT-SIPI online cycle
+time.clock.monotonic	5	1	none	semantic	CLOCK_MONOTONIC advances across a timer wakeup
+time.clock.monotonic_raw	5	1	none	semantic	CLOCK_MONOTONIC_RAW advances across a timer wakeup
+time.clock.boottime	5	1	none	semantic	CLOCK_BOOTTIME advances across a timer wakeup
+time.clock.realtime	5	1	none	semantic	CLOCK_REALTIME advances across a timer wakeup
+time.sleep.1ms	5	1	none	semantic	A one millisecond nanosleep does not wake early
+time.sleep.10ms	5	1	none	semantic	A ten millisecond nanosleep does not wake early
+time.sleep.100ms	5	1	none	semantic	A one hundred millisecond nanosleep does not wake early
+time.sleep.1s	10	1	none	semantic	A one second nanosleep does not wake early
+time.tsc.sleep	5	1	none	semantic	The timestamp counter advances while a task sleeps
+time.resolution.monotonic	5	1	none	semantic	The monotonic clock reports a nonzero usable resolution
+time.resolution.realtime	5	1	none	semantic	The realtime clock reports a nonzero usable resolution
+time.resolution.boottime	5	1	none	semantic	The boottime clock reports a nonzero usable resolution
+block.io.size512	10	1	block	device	A 512-byte block request completes with exact readback
+block.io.size1k	10	1	block	device	A 1 KiB block request completes with exact readback
+block.io.size4k	10	1	block	device	A 4 KiB block request completes with exact readback
+block.io.size64k	15	1	block	device	A 64 KiB block request completes with exact readback
+block.io.offset.low	10	1	block	device	Block I/O completes near the start of the device
+block.io.offset.middle	10	1	block	device	Block I/O completes in the middle of the device
+block.io.offset.high	10	1	block	device	Block I/O completes at a high device offset
+block.io.repeated32	30	1	block	device	Thirty-two distinct block requests complete with exact readback
+block.capacity.nonzero	5	1	block	device	The virtio block device exposes nonzero capacity
+block.logical_block_size	5	1	block	device	The virtio block device exposes a 512-byte logical block size
+network.tx.size64	10	1	network	device	Minimum-sized raw Ethernet frames complete transmission
+network.tx.size128	10	1	network	device	128-byte raw Ethernet frames complete transmission
+network.tx.size512	10	1	network	device	512-byte raw Ethernet frames complete transmission
+network.tx.size1024	10	1	network	device	1024-byte raw Ethernet frames complete transmission
+network.tx.size1500	10	1	network	device	1500-byte raw Ethernet frames complete transmission
+network.tx.count1	10	1	network	device	A single raw Ethernet transmit descriptor completes
+network.tx.count256	15	1	network	device	A batch of 256 raw Ethernet transmit descriptors completes
+network.tx.count1024	30	1	network	device	A batch of 1024 raw Ethernet transmit descriptors completes
+network.mtu	5	1	network	device	The virtio network interface supports a 1500-byte MTU
+network.mac	5	1	network	device	The virtio network interface exposes a valid MAC address
+lifecycle.init.pid1	5	1	none	lifecycle	Each boot starts the packaged BusyBox init as PID 1
+lifecycle.mount.procfs	5	1	none	lifecycle	Each boot constructs a fresh procfs mount
+lifecycle.mount.sysfs	5	1	none	lifecycle	Each boot constructs a fresh sysfs mount
+lifecycle.mount.devtmpfs	5	1	none	lifecycle	Each boot constructs a fresh devtmpfs mount

@@ -29,7 +29,7 @@ available() {
 }
 
 emit "BEGIN version=1 expected_cpus=$expected_cpus"
-while IFS="$(printf '\t')" read -r id timeout min_cpus requires description; do
+while IFS="$(printf '\t')" read -r id timeout min_cpus requires runner description; do
     case "$id" in ''|'#'*) continue ;; esac
     total=$((total + 1))
     if [ "$expected_cpus" -lt "$min_cpus" ]; then
@@ -45,7 +45,7 @@ while IFS="$(printf '\t')" read -r id timeout min_cpus requires description; do
 
     output=/tmp/cts-output
     start=$($bb date +%s)
-    $bb timeout -s KILL "$timeout" "$bb" sh "$root/cases/$id.sh" >"$output" 2>&1
+    $bb timeout -s KILL "$timeout" "$bb" sh "$root/cases/$runner.sh" "$id" >"$output" 2>&1
     rc=$?
     end=$($bb date +%s)
     duration=$(((end - start) * 1000))

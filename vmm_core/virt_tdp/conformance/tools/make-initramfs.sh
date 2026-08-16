@@ -18,6 +18,7 @@ expected_cpus=$3
 }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+"$root/tools/validate-manifest.py" "$root/manifest.tsv" "$root/cases"
 work=$(mktemp -d -t virt-tdp-cts.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/opt/virt-tdp-cts/cases"

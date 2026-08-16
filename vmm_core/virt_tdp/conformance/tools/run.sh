@@ -18,7 +18,8 @@ Options:
   --manifest PATH      Case manifest (default: suite manifest)
   --processors N       L2 processor count (default: 8)
   --memory-gib N       L2 memory GiB (default: 4)
-  --repetitions N      Complete boot/stop cycles (default: 2)
+  --repetitions N      Complete OpenVMM start/stop cycles (default: 2)
+  --resets N           In-place resets within each cycle (default: 0)
   --timeout SECONDS    Per-boot and shutdown timeout (default: 240)
   --output-dir PATH    Result directory (required)
   --openvmm-arg ARG    Additional OpenVMM argument (repeatable)
@@ -32,7 +33,7 @@ USAGE
 root=$(cd "$(dirname "$0")/.." && pwd)
 manifest="$root/manifest.tsv"
 openvmm= kernel= initrd= output_dir=
-processors=8 memory_gib=4 repetitions=2 timeout=240
+processors=8 memory_gib=4 repetitions=2 resets=0 timeout=240
 openvmm_args=()
 while (($#)); do
     case "$1" in
@@ -43,6 +44,7 @@ while (($#)); do
         --processors) processors=$2; shift 2 ;;
         --memory-gib) memory_gib=$2; shift 2 ;;
         --repetitions) repetitions=$2; shift 2 ;;
+        --resets) resets=$2; shift 2 ;;
         --timeout) timeout=$2; shift 2 ;;
         --output-dir) output_dir=$2; shift 2 ;;
         --openvmm-arg) openvmm_args+=("$2"); shift 2 ;;
@@ -56,6 +58,7 @@ done
 for value in processors memory_gib repetitions timeout; do
     [[ ${!value} =~ ^[1-9][0-9]*$ ]] || { echo "$value must be positive" >&2; exit 2; }
 done
+[[ $resets =~ ^[0-9]+$ ]] || { echo "resets must be nonnegative" >&2; exit 2; }
 
 openvmm=$(realpath "$openvmm")
 kernel=$(realpath "$kernel")
@@ -72,15 +75,19 @@ cleanup() {
 trap cleanup EXIT
 
 wait_for_end() {
-    local serial=$1 deadline=$((SECONDS + timeout))
+    local serial=$1 expected=$2 deadline=$((SECONDS + timeout)) count
     while ((SECONDS < deadline)); do
-        grep -q 'VIRT_TDP_CTS END ' "$serial" 2>/dev/null && return 0
+        count=$(grep -c 'VIRT_TDP_CTS END ' "$serial" 2>/dev/null || true)
+        ((count >= expected)) && return 0
+        if grep -q 'reset failed' "$vmm_log" 2>/dev/null; then
+            echo "OpenVMM rejected the in-place reset" >&2
+            return 1
+        fi
         "${tmux_cmd[@]}" has-session -t "$active" 2>/dev/null || return 1
         sleep 1
     done
     return 1
 }
-
 stop_vmm() {
     local deadline=$((SECONDS + timeout))
     "${tmux_cmd[@]}" send-keys -t "$active" quit Enter
@@ -99,7 +106,6 @@ for ((attempt=1; attempt<=repetitions; attempt++)); do
     active="$session_prefix-$attempt"
     serial="$output_dir/attempt-$attempt.serial.log"
     vmm_log="$output_dir/attempt-$attempt.vmm.log"
-    result="$output_dir/attempt-$attempt.json"
     : >"$serial"
     argv=(env VIRT_TDP_WAKE_SIGNAL=0
         "$openvmm" --hypervisor "tdp:memory=$memory_gib"
@@ -108,27 +114,37 @@ for ((attempt=1; attempt<=repetitions; attempt++)); do
         --com1 "file=$serial" "${openvmm_args[@]}")
     printf -v quoted '%q ' "${argv[@]}"
     "${tmux_cmd[@]}" new-session -d -s "$active" "exec $quoted>$vmm_log 2>&1"
-    wait_for_end "$serial" || {
-        echo "attempt $attempt did not produce an END record" >&2
-        tail -120 "$serial" >&2 || true
-        exit 1
-    }
-    "$root/tools/parse-results.py" "$serial" "$manifest" --output "$result"
+    for ((boot=1; boot<=resets+1; boot++)); do
+        wait_for_end "$serial" "$boot" || {
+            echo "attempt $attempt boot $boot did not produce an END record" >&2
+            tail -120 "$serial" >&2 || true
+            exit 1
+        }
+        epoch="$output_dir/attempt-$attempt-boot-$boot.serial.log"
+        result="$output_dir/attempt-$attempt-boot-$boot.json"
+        "$root/tools/extract-epoch.py" "$serial" "$boot" "$epoch"
+        "$root/tools/parse-results.py" "$epoch" "$manifest" --output "$result"
+        attempts_json+=("$result")
+        if ((boot <= resets)); then
+            "${tmux_cmd[@]}" send-keys -t "$active" reset Enter
+        fi
+    done
     stop_vmm || { echo "attempt $attempt did not stop cleanly" >&2; exit 1; }
-    attempts_json+=("$result")
-    echo "conformance attempt $attempt passed and stopped cleanly"
+    echo "conformance attempt $attempt passed $((resets + 1)) boot(s) and stopped cleanly"
 done
 
-python3 - "$output_dir/summary.json" "$processors" "$memory_gib" "${attempts_json[@]}" <<'PY'
+python3 - "$output_dir/summary.json" "$processors" "$memory_gib" "$repetitions" "$resets" "${attempts_json[@]}" <<'PY'
 import json, sys
-output, processors, memory, *paths = sys.argv[1:]
+output, processors, memory, repetitions, resets, *paths = sys.argv[1:]
 attempts = [json.load(open(path)) for path in paths]
 summary = {
     "schema_version": 1,
     "processors": int(processors),
     "memory_gib": int(memory),
-    "repetitions": len(attempts),
-    "clean_shutdowns": len(attempts),
+    "repetitions": int(repetitions),
+    "resets_per_repetition": int(resets),
+    "guest_boots": len(attempts),
+    "clean_shutdowns": int(repetitions),
     "passed": all(attempt["passed"] for attempt in attempts),
     "attempts": attempts,
 }
