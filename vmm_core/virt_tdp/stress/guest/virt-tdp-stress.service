@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenVMM virt_tdp Docker stress workload
+After=docker.service local-fs.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/opt/virt-tdp-stress/run-workloads.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

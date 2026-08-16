@@ -1,0 +1,55 @@
+{
+  "date": "2026-08-16",
+  "hardware": "Intel TDX TD Partitioning L1",
+  "known_host_limitations": [
+    "Only four 1 GiB hugepages were available, limiting the L2 to 4 GiB",
+    "OpenVMM left a VHDX log requiring qemu-img check -r all before disk reuse even after a clean process stop"
+  ],
+  "l2_memory_gib": 4,
+  "module_branch": "dstack/restricted-tdp-uapi",
+  "module_commit": "4323313",
+  "runs": [
+    {
+      "cases_failed": 0,
+      "cases_passed": 12,
+      "clean_openvmm_stop": true,
+      "duration_seconds": 60,
+      "guest_kernel_warnings": [],
+      "processors": 4,
+      "selected_metrics": {
+        "cpu_iterations_per_second": 928444351,
+        "filesystem_write_mb_per_second": 172.3,
+        "memory_mib_per_second": 21275.2,
+        "mixed_duration_ms": 60880,
+        "mixed_postgres_tps": 347.940497,
+        "network_mib_per_second": 8.7,
+        "network_packets_per_second": 6065.9,
+        "postgres_failed_transactions": 0,
+        "postgres_tps": 331.07356,
+        "processes_per_second": 2796.3
+      }
+    },
+    {
+      "cases_failed": 0,
+      "cases_passed": 12,
+      "clean_openvmm_stop": true,
+      "duration_seconds": 60,
+      "guest_kernel_warnings": [
+        "NMI received for unknown reason 21 on CPU 6 during the mixed workload; Linux continued and all integrity gates passed"
+      ],
+      "processors": 8,
+      "selected_metrics": {
+        "cpu_iterations_per_second": 1559617243,
+        "filesystem_write_mb_per_second": 151.7,
+        "memory_mib_per_second": 20344.8,
+        "mixed_duration_ms": 104109,
+        "mixed_postgres_tps": 394.833797,
+        "network_mib_per_second": 9.3,
+        "network_packets_per_second": 6505.8,
+        "postgres_failed_transactions": 0,
+        "postgres_tps": 422.093696,
+        "processes_per_second": 623.1
+      }
+    }
+  ]
+}

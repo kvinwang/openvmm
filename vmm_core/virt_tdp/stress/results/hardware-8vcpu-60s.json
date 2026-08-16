@@ -1,0 +1,100 @@
+{
+  "clean_shutdown": true,
+  "container_runtime": "Docker",
+  "duration_seconds": 60,
+  "memory_gib": 4,
+  "os": "Ubuntu Server",
+  "passed": true,
+  "processors": 8,
+  "result": {
+    "begin": {
+      "cpus": "8",
+      "docker": "true",
+      "duration_seconds": "60",
+      "os": "ubuntu",
+      "version": "1"
+    },
+    "cases": [
+      {
+        "duration_ms": "2251",
+        "metric": "Loaded_image:_postgres:15-alpine_Loaded_image:_redis:7-alpine_Loaded_image:_virt-tdp-workload:latest_",
+        "name": "docker.load",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "193",
+        "metric": "_Live_Restore_Enabled:_false_Product_License:_Community_Engine_WARNING:_IPv4_forwarding_is_disabled_REPOSITORY_TAG_IMAGE_ID_CREATED_SIZE_virt-tdp-workload_latest_09a698f4fd88_55_minutes_ago_928kB_postgres_15-alpine_5cce759a2777_3_months_ago_274MB_redis_7-alpine_487efc061638_3_months_ago_39.1MB_",
+        "name": "docker.info",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "61023",
+        "metric": "iterations=93582100000_iterations_per_second=1559617243_digest=6f0463c0271a4a67_",
+        "name": "cpu.parallel",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "2025",
+        "metric": "bytes=1073741824_passes=12_mib_per_second=20344.8_checksum=322437120_",
+        "name": "memory.bandwidth",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "9397",
+        "metric": "processes=5000_processes_per_second=623.1_",
+        "name": "process.churn",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "23613",
+        "metric": "512+0_records_in_512+0_records_out_536870912_bytes__512.0MB__copied,_3.374980_seconds,_151.7MB/s_128+0_records_in_128+0_records_out_536870912_bytes__512.0MB__copied,_0.111343_seconds,_4.5GB/s_/data/payload:_OK_",
+        "name": "filesystem.sequential",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "73428",
+        "metric": "maximum_number_of_tries:_1_duration:_60_s_number_of_transactions_actually_processed:_25339_number_of_failed_transactions:_0__0.000%__latency_average_=_37.734_ms_latency_stddev_=_25.430_ms_initial_connection_time_=_35.270_ms_tps_=_422.093696__without_initial_connection_time__",
+        "name": "postgres.pgbench",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "8637",
+        "metric": "4103b27830f63fe410214df16bc768a2e0f11d30d7170d89e909f5d57c73fd88_168205671_",
+        "name": "postgres.persistence",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "55138",
+        "metric": "d1f224840c3faa3bb40bc1ca1f816a1efd64d69fe2e4b3d865dc02b719a519fb__SET:_rps=0.0__overall:_0.0__avg_msec=-nan__overall:_-nan____SET:_rps=10285.7__overall:_9744.4__avg_msec=77.763__overall:_77.763____SET:_rps=12381.0__overall:_11027.0__avg_msec=74.691__overall:_76.085____SET:_rps=12685.3__overall:_11568.3__avg_msec=79.662__overall:_77.365____SET:_rps=12289.0__overall:_11751.9__avg_msec=78.853__overall:_77.762____SET:_rps=10666.7__overall:_11538.9__avg_msec=82.500__overall:_78.621____SET:_rps=8414.3__overall:_11028.0__avg_msec=102.764__overall:_81.634____SET:_rps=11238.1__overall:_11057.6__avg_msec=97.065__overall:_83.845____SET:_rps=9714.3__overall:_10891.6__avg_msec=87.250__overall:_84.220____",
+        "name": "redis.benchmark",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "6735",
+        "metric": "2bdace0e51f69284897c36be56504c8631a64aa8c8ab4bd82548ad1959060524_",
+        "name": "redis.persistence",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "79000",
+        "metric": "packets=500000_bytes=750000000_packets_per_second=6505.8_mib_per_second=9.3_",
+        "name": "network.raw_tx",
+        "status": "PASS"
+      },
+      {
+        "duration_ms": "104109",
+        "metric": "latency_stddev_=_25.801_ms_initial_connection_time_=_38.770_ms_tps_=_394.833797__without_initial_connection_time__iterations=49872400000_iterations_per_second=831043660_digest=f44d19cb810d11ce_bytes=1073741824_passes=40_mib_per_second=6707.9_checksum=1305477120__SET:_rps=0.0__overall:_0.0__avg_msec=-nan__overall:_-nan____SET:_rps=4079.7__overall:_3878.8__avg_msec=185.466__overall:_185.466____SET:_rps=4190.5__overall:_4031.0__avg_msec=175.555__overall:_180.435____SET:_rps=5709.8__overall:_4586.3__avg_msec=192.751__overall:_185.506____SET:_rps=6095.2__overall:_4958.0__avg_msec=155.143__overall:_176.311____SET:_rps=7146.2__overall:_5391.8__avg_msec=162.260__overall:_172.619____SET:_rps=6086.3__",
+        "name": "mixed.database_cpu_memory",
+        "status": "PASS"
+      }
+    ],
+    "passed": true,
+    "schema_version": 1,
+    "summary": {
+      "fail": 0,
+      "pass": 12,
+      "total": 12
+    }
+  },
+  "schema_version": 1
+}
