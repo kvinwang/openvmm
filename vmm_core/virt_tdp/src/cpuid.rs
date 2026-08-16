@@ -33,6 +33,10 @@ pub fn for_l2(leaf: u32, subleaf: u32, vp_index: u32, vp_count: u32) -> [u32; 4]
             // watching. It then configures an APIC that does not exist and
             // reports the symptom as a timer that never ticks.
             ecx &= !(1 << 24); // TSC deadline timer
+            // There is no PMU state virtualization across TDG.VP.ENTER. Do
+            // not let the guest program the L1's counters or arm a perf NMI
+            // watchdog against state it does not own.
+            ecx &= !(1 << 15); // PDCM
             // A minimal KVM-compatible hypervisor signature tells Linux that
             // x2APIC without interrupt remapping is supported. No KVM feature
             // bits are exposed; this is only the standard guest-environment
@@ -59,6 +63,11 @@ pub fn for_l2(leaf: u32, subleaf: u32, vp_index: u32, vp_count: u32) -> [u32; 4]
         (7, 0) => {
             ecx &= !(1 << 16); // LA57: the L2's paging level is not ours to change
         }
+        // Architectural performance monitoring is not virtualized. Passing
+        // the L1 leaf through makes Linux enable its hard-lockup watchdog;
+        // counter-overflow NMIs then arrive without matching virtual PMU
+        // state and are reported as "NMI received for unknown reason".
+        (0xa, _) | (0x23, _) => return [0; 4],
         // The L1 is a TD, so this leaf reports TDX. An L2 is not a TD — it has
         // no TDCS, cannot attest, and every TDCALL it makes exits to the VMM —
         // and reporting otherwise sends Linux down its confidential-computing
@@ -86,5 +95,12 @@ mod tests {
         assert_eq!(for_l2(0xb, 0, 3, 4), [0, 1, 1 << 8, 3]);
         assert_eq!(for_l2(0xb, 1, 3, 4), [2, 4, (2 << 8) | 1, 3]);
         assert_eq!(for_l2(0xb, 2, 3, 4), [0; 4]);
+    }
+
+    #[test]
+    fn hides_unvirtualized_performance_monitoring() {
+        assert_eq!(for_l2(0xa, 0, 0, 1), [0; 4]);
+        assert_eq!(for_l2(0x23, 0, 0, 1), [0; 4]);
+        assert_eq!(for_l2(1, 0, 0, 1)[2] & (1 << 15), 0);
     }
 }
