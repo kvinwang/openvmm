@@ -26,6 +26,29 @@ impl ResourceKind for HypervisorKind {
     const NAME: &'static str = "hypervisor";
 }
 
+/// Handle for the TDX L2 backend.
+///
+/// Carries the guest's memory size rather than a device handle: the backend
+/// has to allocate that memory itself, because a guest's physical addresses
+/// under TD partitioning are the L1's own and the memory layout is built
+/// around wherever the allocation lands.
+#[derive(MeshPayload)]
+pub struct TdpHandle {
+    /// Guest RAM size in bytes. Rounded up to whole 1 GiB hugepages.
+    pub memory_size: u64,
+    /// The memory itself, already reserved.
+    ///
+    /// It travels as a descriptor because the worker runs in its own process
+    /// and the guest's RAM is specific physical pages: allocating again on the
+    /// other side would produce different pages at a different guest physical
+    /// address, which is the one thing this backend cannot tolerate.
+    pub memory: Option<std::os::fd::OwnedFd>,
+}
+
+impl ResourceId<HypervisorKind> for TdpHandle {
+    const ID: &'static str = "tdp";
+}
+
 /// Handle for the KVM hypervisor backend.
 ///
 /// Contains the open `/dev/kvm` file descriptor so that it can be probed

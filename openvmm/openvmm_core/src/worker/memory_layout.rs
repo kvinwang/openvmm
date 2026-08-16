@@ -178,9 +178,6 @@ pub(super) fn resolve_memory_layout(
     // Reserve low addresses so RAM starts above `ram_start_address`. This is
     // used on aarch64 Linux direct boot to skip the 128 MiB–129 MiB IOVA
     // region that iommufd reserves for the host MSI doorbell.
-    if input.ram_start_address > 0 {
-        builder.reserve("low-ram-gap", MemoryRange::new(0..input.ram_start_address));
-    }
 
     let arch_reserved = if cfg!(guest_arch = "x86_64") {
         ARCH_RESERVED_X86_64
@@ -193,6 +190,62 @@ pub(super) fn resolve_memory_layout(
         .max(arch_reserved.len());
     let chipset_low_mmio = MemoryRange::new(four_gb - low_mmio_size..four_gb);
     builder.fixed("chipset-low-mmio", chipset_low_mmio);
+
+    // Keep RAM above `ram_start_address`, without claiming the window the
+    // fixed MMIO ranges just took. A backend that puts RAM high — running the
+    // guest as a TDX L2, where the guest's addresses are the L1's own — wants
+    // the low region kept clear of RAM, not kept clear of everything.
+    // A guest whose memory starts high still needs somewhere below 1 MiB:
+    // Linux reserves its real-mode trampoline there and will not boot without
+    // it. The backend backs this separately from the rest — it is memory the
+    // guest's host owns, served by emulation — so it is a range of its own.
+    let low_ram = if input.ram_start_address > 0 {
+        // Back the full legacy low-memory window. Page zero and the ranges
+        // above conventional RAM stay reserved in e820, but early Linux reads
+        // both the BIOS data area and the option-ROM area while probing. The
+        // TDP backend serves those accesses through the emulator, which must
+        // see the same low-memory backing as the loader.
+        // The upper half is backed by the TDP driver's matching L1
+        // boot-reserved range. The lower half remains ordinary VMM memory:
+        // the Linux loader places boot parameters there, while AP executable
+        // code is allocated at the top of conventional memory.
+        let range = MemoryRange::new(0..0x100000);
+        builder.fixed("low-ram", range);
+        Some(range)
+    } else {
+        None
+    };
+
+    // With RAM pushed high, everything below the chipset window is about to
+    // be reserved, which would leave a dynamic Mmio32 request nothing but the
+    // first page of the address space — and a virtio-mmio slot at GPA 0 is
+    // read as zeroes through the backed low memory, never faulting into the
+    // device. Pin the slots directly below the chipset window instead, and
+    // keep that much out of the reservation.
+    let virtio_mmio_fixed =
+        (input.ram_start_address > 0 && input.virtio_mmio_count > 0).then(|| {
+            let size = input.virtio_mmio_count as u64 * PAGE_SIZE;
+            MemoryRange::new(chipset_low_mmio.start() - size..chipset_low_mmio.start())
+        });
+
+    if input.ram_start_address > 0 {
+        // In two pieces, because the fixed MMIO window sits in the middle of
+        // the range being kept clear.
+        // Above whatever low RAM was just placed, so the two do not collide.
+        let gap_start = low_ram.map_or(0, |r| r.end());
+        let gap_end = input
+            .ram_start_address
+            .min(virtio_mmio_fixed.map_or(chipset_low_mmio.start(), |r| r.start()));
+        if gap_end > gap_start {
+            builder.reserve("low-ram-gap", MemoryRange::new(gap_start..gap_end));
+        }
+        if input.ram_start_address > chipset_low_mmio.end() {
+            builder.reserve(
+                "low-ram-gap-high",
+                MemoryRange::new(chipset_low_mmio.end()..input.ram_start_address),
+            );
+        }
+    }
 
     // Chipset high MMIO (Mmio64): VMOD/PCI0 _CRS high range.
     // When no high MMIO is requested, use a zero-length range at 4GB so that
@@ -305,7 +358,10 @@ pub(super) fn resolve_memory_layout(
     // 4 KiB, so the region is `count * 4 KiB` placed as a single Mmio32
     // request.
     let mut virtio_mmio_region = MemoryRange::EMPTY;
-    if input.virtio_mmio_count > 0 {
+    if let Some(range) = virtio_mmio_fixed {
+        virtio_mmio_region = range;
+        builder.fixed("virtio-mmio", range);
+    } else if input.virtio_mmio_count > 0 {
         builder.request(
             "virtio-mmio",
             &mut virtio_mmio_region,
@@ -471,7 +527,7 @@ pub(super) fn resolve_memory_layout(
         }
     }
 
-    let ram = ram_ranges_by_node
+    let mut ram = ram_ranges_by_node
         .into_iter()
         .enumerate()
         .flat_map(|(vnode, ranges)| {
@@ -481,6 +537,9 @@ pub(super) fn resolve_memory_layout(
             })
         })
         .collect::<Vec<_>>();
+    if let Some(range) = low_ram {
+        ram.insert(0, MemoryRangeWithNode { range, vnode: 0 });
+    }
 
     let vtl2_range = input.vtl2_layout.map(|_| vtl2_range);
 

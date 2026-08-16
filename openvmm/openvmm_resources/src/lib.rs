@@ -143,6 +143,9 @@ vm_resource::register_static_resolvers! {
     #[cfg(all(target_os = "linux", feature = "virt_kvm", guest_is_native))]
     hypervisor_resolvers::kvm::KvmResolver,
 
+    #[cfg(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64"))]
+    hypervisor_resolvers::tdp::TdpResolver,
+
     #[cfg(all(target_os = "windows", feature = "virt_whp", guest_is_native))]
     hypervisor_resolvers::whp::WhpResolver,
 

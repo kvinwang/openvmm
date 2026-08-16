@@ -7,6 +7,8 @@ default-members = ["openvmm/openvmm"]
 members = [
   # openvmm
   "openvmm/openvmm",
+  # dstack: OpenVMM backend for Intel TD partitioning
+  "vmm_core/virt_tdp",
   # openvmm_vhost
   "openvmm_vhost/openvmm_vhost",
   # repo tooling
@@ -430,6 +432,7 @@ state_unit = { path = "vmm_core/state_unit" }
 virt = { path = "vmm_core/virt" }
 virt_hvf = { path = "vmm_core/virt_hvf" }
 virt_kvm = { path = "vmm_core/virt_kvm" }
+virt_tdp = { path = "vmm_core/virt_tdp" }
 virt_mshv = { path = "vmm_core/virt_mshv" }
 virt_support_aarch64emu = { path = "vmm_core/virt_support_aarch64emu" }
 virt_support_apic = { path = "vmm_core/virt_support_apic" }

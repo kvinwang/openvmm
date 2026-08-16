@@ -14,6 +14,7 @@
 pub mod hvf;
 pub mod kvm;
 pub mod mshv;
+pub mod tdp;
 pub mod whp;
 
 // Register probes for auto-detection (checked in this order).
@@ -23,6 +24,12 @@ hypervisor_resources::register_hypervisor_probes! {
 
     #[cfg(all(target_os = "linux", feature = "virt_kvm", guest_is_native))]
     kvm::KvmProbe,
+
+    // Last: an L2 backend is only usable inside a TD created as an L1 VMM, so
+    // a machine that can run it can almost always run KVM too, and KVM is the
+    // one a user asking for nothing in particular wants.
+    #[cfg(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64"))]
+    tdp::TdpProbe,
 
     #[cfg(all(target_os = "windows", feature = "virt_whp", guest_is_native))]
     whp::WhpProbe,

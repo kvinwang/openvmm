@@ -677,6 +677,27 @@ impl StopVp<'_> {
         }
     }
 
+    /// Registers the task waker for a backend that may block synchronously.
+    ///
+    /// Most backends naturally return `Poll::Pending` and use
+    /// [`Self::until_stop`]. A backend whose run call enters the processor
+    /// synchronously must arm the stop waker before doing so; otherwise a stop
+    /// request cannot reach the partition's `request_yield` implementation.
+    pub async fn arm_waker(&self) -> Result<(), VpStopped> {
+        let mut armed = false;
+        poll_fn(|cx| {
+            self.check()?;
+            self.source.waker.set(Some(cx.waker().clone()));
+            if std::mem::replace(&mut armed, true) {
+                Poll::Ready(Ok(()))
+            } else {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        })
+        .await
+    }
+
     /// Runs `fut` until it completes or the VP should stop.
     pub async fn until_stop<Fut: Future>(&mut self, fut: Fut) -> Result<Fut::Output, VpStopped> {
         let mut fut = pin!(fut);

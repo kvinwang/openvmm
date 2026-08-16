@@ -11,6 +11,7 @@ default = [
   "gdb",
   "virt_hvf",
   "virt_kvm",
+  "virt_tdp",
   "virt_mshv",
   "virt_whp",
   "net_consomme",
@@ -25,6 +26,7 @@ vendored_crypto = ["crypto/vendored"]
 tpm = ["openvmm_resources/tpm"]
 virt_hvf = ["openvmm_resources/virt_hvf", "openvmm_hypervisors/virt_hvf"]
 virt_kvm = ["openvmm_resources/virt_kvm", "openvmm_hypervisors/virt_kvm"]
+virt_tdp = ["openvmm_resources/virt_tdp", "openvmm_hypervisors/virt_tdp", "openvmm_entry/virt_tdp"]
 virt_mshv = ["openvmm_resources/virt_mshv", "openvmm_hypervisors/virt_mshv"]
 virt_whp = ["openvmm_resources/virt_whp", "openvmm_hypervisors/virt_whp"]
 

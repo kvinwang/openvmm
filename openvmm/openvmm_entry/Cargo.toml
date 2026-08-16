@@ -12,6 +12,9 @@ default = ["ttrpc", "grpc"]
 grpc = ["mesh_rpc/grpc"]
 ttrpc = []
 
+# Enable building with TDX L2 support.
+virt_tdp = ["dep:virt_tdp"]
+
 [dependencies]
 chipset_resources.workspace = true
 chipset_device_worker_defs.workspace = true
@@ -102,6 +105,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 unicycle.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+virt_tdp = { workspace = true, optional = true }
 net_tap.workspace = true
 
 [target.'cfg(windows)'.dependencies]

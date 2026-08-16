@@ -1715,8 +1715,33 @@ async fn vm_config_from_command_line(
                 resource: VirtioPciDeviceHandle(resource).into_resource(),
             });
         } else {
-            add_virtio_device(VirtioBusCli::Auto, resource);
+            add_virtio_device(opt.virtio_net_bus, resource);
         }
+    }
+
+    for &cli_args::DiskCli {
+        vtl,
+        ref kind,
+        read_only,
+        is_dvd,
+        ref underhill,
+        ref pcie_port,
+        controller: _,
+        nsid: _,
+        lun: _,
+        relay: _,
+    } in &opt.virtio_blk_mmio
+    {
+        // The storage builder's virtio-blk path presents the device over
+        // VPCI, which needs a bus this chassis may not have. This one rides
+        // the plain virtio MMIO bus and supports nothing fancier than a disk.
+        if underhill.is_some() || pcie_port.is_some() || vtl != DeviceVtl::Vtl0 || is_dvd {
+            anyhow::bail!("virtio-blk-mmio supports only plain VTL0 disks");
+        }
+        let disk = disk_open(kind, read_only).await?;
+        let resource =
+            virtio_resources::blk::VirtioBlkHandle { disk, read_only }.into_resource();
+        add_virtio_device(VirtioBusCli::Mmio, resource);
     }
 
     for args in &opt.virtio_fs {
@@ -1896,7 +1921,31 @@ async fn vm_config_from_command_line(
         );
     }
 
+    // Running the guest as a TDX L2 means its physical addresses are the L1's
+    // own, so the memory has to be reserved before the layout is built and the
+    // layout has to be built around it. Every other backend works the other
+    // way round, which is why this is here rather than in the backend.
+    #[cfg(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64"))]
+    // The spec may carry parameters after a colon; only the name picks the
+    // backend.
+    let tdp_memory = if opt
+        .hypervisor
+        .as_deref()
+        .is_some_and(|spec| spec.split(':').next() == Some("tdp"))
+    {
+        let (base, file) = virt_tdp::reserve_guest_memory(opt.memory_size() as usize)
+            .context("reserving the L2's memory")?;
+        Some((base, file))
+    } else {
+        None
+    };
+    #[cfg(not(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64")))]
+    let tdp_memory: Option<(u64, std::fs::File)> = None;
+
     let mut cfg = Config {
+        // Set by the backend when it does not choose its own guest
+        // physical addresses; see Config::ram_start_address.
+        ram_start_address: tdp_memory.as_ref().map(|(base, _)| *base),
         chipset,
         load_mode,
         floppy_disks,
@@ -2717,6 +2766,21 @@ async fn run_control_inner(
                     )
                 })
                 .transpose()?;
+            // An L2's RAM is specific physical pages, not whatever the VMM
+            // would otherwise allocate. The reservation happened while the
+            // configuration was built, because the memory layout had to be
+            // built around its address.
+            #[cfg(all(target_os = "linux", feature = "virt_tdp", guest_arch = "x86_64"))]
+            let shared_memory = match virt_tdp::reserved_guest_memory() {
+                Some(memory) => Some(openvmm_helpers::shared_memory::file_to_shared_memory_fd(
+                    memory
+                        .region()
+                        .file()
+                        .try_clone()
+                        .context("sharing the L2's memory")?,
+                )?),
+                None => shared_memory,
+            };
             (shared_memory, None)
         };
 

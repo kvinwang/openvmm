@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+name = "virt_tdp"
+edition.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+virt.workspace = true
+virt_support_apic.workspace = true
+virt_support_x86emu.workspace = true
+guestmem.workspace = true
+hvdef.workspace = true
+inspect.workspace = true
+memory_range.workspace = true
+vm_topology.workspace = true
+vmcore.workspace = true
+x86defs.workspace = true
+x86emu.workspace = true
+
+anyhow.workspace = true
+libc.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zerocopy.workspace = true
+
+[lints]
+workspace = true

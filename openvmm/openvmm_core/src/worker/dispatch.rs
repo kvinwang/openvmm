@@ -203,6 +203,7 @@ impl Manifest {
             framebuffer: config.framebuffer,
             vga_firmware: config.vga_firmware,
             vtl2_gfx: config.vtl2_gfx,
+            ram_start_address: config.ram_start_address,
             virtio_devices: config.virtio_devices,
             vmbus: config.vmbus,
             vtl2_vmbus: config.vtl2_vmbus,
@@ -247,6 +248,9 @@ pub struct Manifest {
     framebuffer: Option<framebuffer::Framebuffer>,
     vga_firmware: Option<RomFileLocation>,
     vtl2_gfx: bool,
+    /// Lowest guest physical address for ordinary RAM, when the backend does
+    /// not get to choose.
+    ram_start_address: Option<u64>,
     virtio_devices: Vec<(VirtioBus, Resource<VirtioDeviceHandle>)>,
     vmbus: Option<VmbusConfig>,
     vtl2_vmbus: Option<VmbusConfig>,
@@ -1113,12 +1117,15 @@ impl InitializedVm {
         //  2. Fix UEFI to allow booting from >0.
         //  3. Install a little bit of low memory, enough for UEFI to get to DXE
         //     (which can run anywhere.)
-        let ram_start_address =
-            if cfg!(guest_arch = "aarch64") && matches!(cfg.load_mode, LoadMode::Linux { .. }) {
-                1024 * 1024 * 1024 // 1 GiB
-            } else {
-                0
-            };
+        let ram_start_address = if let Some(base) = cfg.ram_start_address {
+            // A backend that does not choose its own guest physical addresses
+            // says where its memory is, and the layout is built around that.
+            base
+        } else if cfg!(guest_arch = "aarch64") && matches!(cfg.load_mode, LoadMode::Linux { .. }) {
+            1024 * 1024 * 1024 // 1 GiB
+        } else {
+            0
+        };
 
         let vtl2_framebuffer_size = if cfg.vtl2_gfx {
             cfg.framebuffer
@@ -1232,6 +1239,24 @@ impl InitializedVm {
                 && !mem.hugepages
             {
                 anyhow::bail!("node {vnode}: hugepage_size={size} requires hugepages=on");
+            }
+
+            // A caller-provided mapping backs one specific range — for a
+            // backend whose guest physical addresses are its host's, it *is*
+            // that range's memory and cannot be moved. Ranges below it get
+            // ordinary memory of their own, or the mapping would be spread
+            // across both and neither would be where it belongs.
+            let (ranges, low_ranges): (Vec<_>, Vec<_>) = if existing_mappable.is_some()
+                && cfg.ram_start_address.is_some()
+            {
+                let base = cfg.ram_start_address.expect("checked");
+                ranges.into_iter().partition(|r| r.start() >= base)
+            } else {
+                (ranges, Vec::new())
+            };
+            if !low_ranges.is_empty() {
+                memory_builder = memory_builder
+                    .add_backing(membacking::RamBackingRequest::new(low_ranges));
             }
 
             let mut backing = membacking::RamBackingRequest::new(ranges)
@@ -3926,6 +3951,7 @@ impl LoadedVm {
             framebuffer: None,      // TODO
             vga_firmware: None,     // TODO
             vtl2_gfx: false,        // TODO
+            ram_start_address: None,
             virtio_devices: vec![], // TODO
             #[cfg(all(windows, feature = "virt_whp"))]
             vpci_resources: vec![], // TODO
@@ -4012,6 +4038,7 @@ fn add_devices_to_dsdt_x64(
     // layout resolver. Each 4 KiB slot is a separate device.
     for i in 0..virtio_mmio_region.page_count_4k() {
         let slot_base = virtio_mmio_region.start() + i * HV_PAGE_SIZE;
+        tracing::info!(slot_base, irq = virtio_mmio_irq, "virtio-mmio slot");
         let mut device = dsdt::Device::new(format!("\\_SB.VI{i:02}").as_bytes());
         device.add_object(&dsdt::NamedString::new(b"_HID", b"LNRO0005"));
         device.add_object(&dsdt::NamedInteger::new(b"_UID", i));

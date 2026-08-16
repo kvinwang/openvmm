@@ -5804,6 +5804,7 @@ dependencies = [
  "unix_socket",
  "vfio_assigned_device_resources",
  "video_core",
+ "virt_tdp",
  "virt_whp",
  "virtio_resources",
  "vm_manifest_builder",
@@ -5898,6 +5899,7 @@ dependencies = [
  "fs-err",
  "hypervisor_resources",
  "virt_mshv",
+ "virt_tdp",
  "virt_whp",
  "vm_resource",
 ]
@@ -5967,6 +5969,7 @@ dependencies = [
  "virt_hvf",
  "virt_kvm",
  "virt_mshv",
+ "virt_tdp",
  "virt_whp",
  "virtio",
  "virtio_blk",
@@ -9634,6 +9637,29 @@ dependencies = [
  "tracing",
  "virt",
  "vm_topology",
+ "x86defs",
+ "x86emu",
+ "zerocopy",
+]
+
+[[package]]
+name = "virt_tdp"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "guestmem",
+ "hvdef",
+ "inspect",
+ "libc",
+ "memory_range",
+ "parking_lot",
+ "thiserror 2.0.16",
+ "tracing",
+ "virt",
+ "virt_support_apic",
+ "virt_support_x86emu",
+ "vm_topology",
+ "vmcore",
  "x86defs",
  "x86emu",
  "zerocopy",

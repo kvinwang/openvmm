@@ -573,6 +573,17 @@ impl<'a> PageTableBuilder<'a> {
 struct IdentityMapBuilderParams {
     page_table_gpa: u64,
     identity_map_size: IdentityMapSize,
+    /// Where the identity map starts.
+    ///
+    /// Normally zero. A guest whose memory does not start at zero — one
+    /// running as a TDX L2, where its physical addresses are the host's own —
+    /// needs the identity map over the range it actually has, and the Linux
+    /// boot protocol requires it to be a true identity map rather than a
+    /// biased one.
+    start_va: u64,
+    /// Whether to also map the first gibibyte, for a guest that needs low
+    /// memory it does not own.
+    map_low: bool,
     address_bias: u64,
     pml4e_link: Option<(u64, u64)>,
 }
@@ -611,6 +622,8 @@ impl<'a> IdentityMapBuilder<'a> {
                 params: IdentityMapBuilderParams {
                     page_table_gpa,
                     identity_map_size,
+                    start_va: 0,
+                    map_low: false,
                     address_bias: 0,
                     pml4e_link: None,
                 },
@@ -622,6 +635,28 @@ impl<'a> IdentityMapBuilder<'a> {
 
     /// Builds the page tables with an address bias, a fixed offset between the virtual
     /// and physical addresses in the identity map
+    /// Also identity-map the first gibibyte.
+    ///
+    /// A guest whose memory starts high still needs the range below 1 MiB —
+    /// Linux puts its real-mode trampoline there and will not boot without it.
+    /// The memory itself is the VMM's problem; this is only about the guest
+    /// being able to address it, which it cannot do through a map that starts
+    /// where its own memory does.
+    pub fn with_low_identity_map(mut self, enable: bool) -> Self {
+        self.params.map_low = enable;
+        self
+    }
+
+    /// Start the identity map at `start_va` rather than at zero.
+    pub fn with_start_va(mut self, start_va: u64) -> Self {
+        assert!(
+            start_va.is_multiple_of(0x4000_0000),
+            "an identity map has to start on a 1 GiB boundary"
+        );
+        self.params.start_va = start_va;
+        self
+    }
+
     pub fn with_address_bias(mut self, address_bias: u64) -> Self {
         self.params.address_bias = address_bias;
         self
@@ -653,7 +688,9 @@ impl<'a> IdentityMapBuilder<'a> {
             IdentityMapSize::Size4Gb => 4,
             IdentityMapSize::Size8Gb => 8,
         };
-        let page_table_count = leaf_page_table_count + if params.address_bias == 0 { 2 } else { 1 };
+        let page_table_count = leaf_page_table_count
+            + if params.address_bias == 0 { 2 } else { 1 }
+            + if params.map_low { 1 } else { 0 };
         let mut page_table_allocator = page_table.iter_mut().enumerate();
 
         // Allocate single PDPTE table.
@@ -670,7 +707,8 @@ impl<'a> IdentityMapBuilder<'a> {
 
             // Set PML4E entry linking PML4E to PDPTE.
             let output_address = params.page_table_gpa + pdpte_table_index as u64 * X64_PAGE_SIZE;
-            pml4e_table.entries[0].set_entry(PageTableEntryType::Pde(output_address));
+            pml4e_table.entries[(params.start_va >> 39) as usize & 511]
+                .set_entry(PageTableEntryType::Pde(output_address));
 
             // Set PML4E entry to link the additional entry if specified.
             if let Some((link_target_gpa, linkage_gpa)) = params.pml4e_link {
@@ -693,8 +731,23 @@ impl<'a> IdentityMapBuilder<'a> {
             IdentityMapSize::Size4Gb => 0x100000000u64,
             IdentityMapSize::Size8Gb => 0x200000000u64,
         };
-        let mut current_va = 0;
+        let mut current_va = params.start_va;
 
+        // The low gibibyte, for a guest whose own memory is elsewhere.
+        if params.map_low && params.start_va != 0 {
+            let (pde_table_index, pde_table) = page_table_allocator
+                .next()
+                .expect("page table allocation is sized above");
+            let output_address = params.page_table_gpa + pde_table_index as u64 * X64_PAGE_SIZE;
+            pdpte_table.entries[0].set_entry(PageTableEntryType::Pde(output_address));
+            let mut va = 0u64;
+            for entry in pde_table.iter_mut() {
+                entry.set_entry(PageTableEntryType::Leaf2MbPage(va));
+                va += X64_LARGE_PAGE_SIZE;
+            }
+        }
+
+        let top_address = params.start_va + top_address;
         while current_va < top_address {
             // Allocate a new PDE table
             let (pde_table_index, pde_table) = page_table_allocator

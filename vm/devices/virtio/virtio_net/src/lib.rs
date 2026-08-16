@@ -284,6 +284,9 @@ impl VirtioDevice for Device {
                 .with_bank(1, features_bank1.into_bits())
                 .with_ring_event_idx(true)
                 .with_ring_indirect_desc(true)
+                // The split ring stalls this device on the virtio MMIO bus —
+                // the guest stops making progress during driver probe — so
+                // the packed ring is not optional here yet.
                 .with_ring_packed(true)
                 // We guarantee in-order descriptor completion per queue. We
                 // don't yet take advantage of the ability to do batched

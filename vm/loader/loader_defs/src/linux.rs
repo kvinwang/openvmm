@@ -222,7 +222,10 @@ pub struct boot_params {
     pub _pad2: [u8; 4],
     pub tboot_addr: u64,
     pub ist_info: ist_info,
-    pub _pad3: [u8; 16],
+    /// Where the ACPI RSDP is, for a guest that cannot find it by scanning the
+    /// BIOS area — because its memory does not start at zero. Linux 5.0+.
+    pub acpi_rsdp_addr: u64,
+    pub _pad3: [u8; 8],
     pub hd0_info: [u8; 16],
     pub hd1_info: [u8; 16],
     pub sys_desc_table: sys_desc_table,

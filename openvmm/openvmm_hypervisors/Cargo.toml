@@ -13,6 +13,9 @@ virt_mshv = ["dep:virt_mshv"]
 # Enable building with KVM support.
 virt_kvm = []
 
+# Enable building with TDX L2 support.
+virt_tdp = ["dep:virt_tdp"]
+
 # Enable building with WHP support.
 virt_whp = ["dep:virt_whp"]
 
@@ -27,6 +30,7 @@ vm_resource.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 virt_mshv = { workspace = true, optional = true }
+virt_tdp = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 virt_whp = { workspace = true, optional = true }

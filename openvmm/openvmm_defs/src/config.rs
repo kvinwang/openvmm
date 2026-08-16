@@ -43,6 +43,13 @@ pub struct Config {
     pub framebuffer: Option<framebuffer::Framebuffer>,
     pub vga_firmware: Option<RomFileLocation>,
     pub vtl2_gfx: bool,
+    /// Lowest guest physical address for ordinary RAM.
+    ///
+    /// Normally zero. A backend whose guest physical addresses are not its own
+    /// to choose — running the guest as a TDX L2, where aliasing publishes the
+    /// L1's own address — has to have the layout built around where its memory
+    /// actually is.
+    pub ram_start_address: Option<u64>,
     pub virtio_devices: Vec<(VirtioBus, Resource<VirtioDeviceHandle>)>,
     #[cfg(windows)]
     pub vpci_resources: Vec<virt_whp::device::DeviceHandle>,

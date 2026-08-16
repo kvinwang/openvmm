@@ -508,6 +508,13 @@ options:
     #[clap(long = "virtio-blk")]
     pub virtio_blk: Vec<DiskCli>,
 
+    /// expose a disk as a virtio-blk device on the virtio MMIO bus
+    ///
+    /// Same disk syntax as `--virtio-blk`, for a chassis with neither PCI nor
+    /// VPCI. Only plain VTL0 disks are supported.
+    #[clap(long = "virtio-blk-mmio")]
+    pub virtio_blk_mmio: Vec<DiskCli>,
+
     /// Attach a vhost-user device via a Unix socket.
     ///
     /// The first positional argument is the socket path. Options:
@@ -784,6 +791,10 @@ options:
     /// expose the NIC over emulated PCIe at the specified port.
     #[clap(long)]
     pub virtio_net: Vec<NicConfigCli>,
+
+    /// add virtio_net devices under either the PCI or MMIO bus, or whatever the hypervisor supports (pci | mmio | auto)
+    #[clap(long, value_name = "BUS", default_value = "auto")]
+    pub virtio_net_bus: VirtioBusCli,
 
     /// send log output from the worker process to a file instead of stderr. the file will be overwritten.
     #[clap(long, value_name = "PATH")]
