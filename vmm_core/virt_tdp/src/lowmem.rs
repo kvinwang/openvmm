@@ -7,9 +7,16 @@
 //! continue, even with one processor that will never run it. An L2's guest
 //! physical addresses are the L1's own: aliasing publishes an address, it
 //! does not choose one. Ordinary allocated memory therefore cannot execute at
-//! the required address. The L1 reserves 512..640 KiB in its boot memory map,
-//! and the restricted driver exclusively maps those exact private pages for
-//! OpenVMM. The remaining legacy holes stay emulated.
+//! the required address. The L1 reserves 512 KiB..1 MiB in its boot memory
+//! map, and the restricted driver exclusively maps those exact private pages
+//! for OpenVMM.
+//!
+//! The whole upper legacy window must be real memory, not just the trampoline.
+//! Modern libc uses SSE loads while systemd and udev scan the DMI/ROM ranges.
+//! The TDX L2 exit ABI does not expose XMM state, so replaying those loads in
+//! the instruction emulator would silently return corrupt data and eventually
+//! corrupt the scanning process. A same-GPA alias lets hardware execute the
+//! instruction with the guest's real vector state.
 //!
 //! Declaring the range in e820 without physical backing is insufficient: the
 //! kernel writes and then executes the trampoline. Register-only instructions
@@ -22,13 +29,11 @@
 /// real-mode trampoline.
 pub const LOW_MEMORY_BASE: u64 = 512 * 1024;
 
-/// End of conventional RAM below the VGA aperture. The L1 must reserve
+/// End of the upper legacy window. The L1 must reserve
 /// `LOW_MEMORY_BASE..LOW_MEMORY_RESERVED_END` at boot and configure the
 /// restricted driver with the same range.
-pub const LOW_MEMORY_RESERVED_END: u64 = 640 * 1024;
+pub const LOW_MEMORY_RESERVED_END: u64 = 1 << 20;
 pub const LOW_MEMORY_SIZE: usize = (LOW_MEMORY_RESERVED_END - LOW_MEMORY_BASE) as usize;
 
-/// End of the complete legacy window that OpenVMM still backs for BIOS-era
-/// probes. Only conventional RAM above `LOW_MEMORY_BASE` is directly aliased;
-/// the VGA/ROM holes continue to be emulated.
+/// End of the complete legacy window that OpenVMM backs for BIOS-era probes.
 pub const LOW_MEMORY_END: u64 = 1 << 20;
